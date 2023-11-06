@@ -11,6 +11,10 @@ set(sources
     util_random.c
 )
 
+# FIXME-WT-1931 - Not sure if this is still needed now we set it at the top level.
+add_compile_options("-fsanitize=memory" "-fno-optimize-sibling-calls" "-fsanitize-memory-track-origins=2")
+link_libraries("-fsanitize=memory" "-fno-optimize-sibling-calls" "-fsanitize-memory-track-origins=2")
+
 set(link_type)
 add_library(test_util STATIC ${sources})
 set_property(TARGET test_util PROPERTY POSITION_INDEPENDENT_CODE ON)

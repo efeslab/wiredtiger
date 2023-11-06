@@ -258,6 +258,9 @@ add_subdirectory(src/utilities)
 # Establish our install target configuration.
 include(cmake/install/install.cmake)
 
+# FIXME-WT-11931 - Throwing this here so it applies to all build targets including test/ and bench/
+add_compile_options("-fsanitize=memory" "-fno-optimize-sibling-calls" "-fsanitize-memory-track-origins=2")
+link_libraries("-fsanitize=memory" "-fno-optimize-sibling-calls" "-fsanitize-memory-track-origins=2")
 
 if(ENABLE_PYTHON)
     add_subdirectory(lang/python)

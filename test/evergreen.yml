@@ -161,20 +161,38 @@ functions:
         ${PREPARE_PATH}
         # Not setting verbose mode as we have sensitive keys that could be logged.
 
+
+
+        # FIXME-WT-11931 - Hacking in MSan compressors and MSan config
+        ./build_compressors.sh
+        export PATH=$(realpath ./tmp_msan-thirdparty):$PATH
+        export PATH=$(realpath ./tmp_msan-thirdparty/lib):$PATH
+        export PATH=$(realpath ./tmp_msan-thirdparty/include):$PATH
+
+        export CMAKE_BUILD_TYPE="MSan"
+        export MSAN_OPTIONS="abort_on_error=1:disable_coredump=0:verbosity=3"
+        export TESTUTIL_MSAN=1
+
+
+
         # Define common config flags for the tasks to make it cleaner when configuring the tasks.
         # Note that the config flags are resolved prior to changing to cmake_build directory.
-        DEFINED_EVERGREEN_CONFIG_FLAGS="${CMAKE_BUILD_TYPE|} \
+        # FIXME-WT-11931 - Hacking in default settings:
+        #  - CMAKE_BUILD_TYPE=MSan
+        #  - HAVE_BUILTIN_EXTENSION_* = 1
+        #  - CMAKE_TOOLCHAIN_FILE = clang
+        DEFINED_EVERGREEN_CONFIG_FLAGS="${CMAKE_BUILD_TYPE|-DCMAKE_BUILD_TYPE=MSan} \
           ${CMAKE_INSTALL_PREFIX|-DCMAKE_INSTALL_PREFIX=$(pwd)/cmake_build/LOCAL_INSTALL} \
           ${CMAKE_PREFIX_PATH|-DCMAKE_PREFIX_PATH="$(pwd)/TCMALLOC_LIB"} \
-          ${CMAKE_TOOLCHAIN_FILE|-DCMAKE_TOOLCHAIN_FILE=../cmake/toolchains/mongodbtoolchain_stable_gcc.cmake} \
+          ${CMAKE_TOOLCHAIN_FILE|-DCMAKE_TOOLCHAIN_FILE=../cmake/toolchains/mongodbtoolchain_stable_clang.cmake} \
           ${ENABLE_TCMALLOC|}
           ${NONSTANDALONE|} \
           ${ENABLE_SHARED|} \
           ${ENABLE_STATIC|} \
-          ${HAVE_BUILTIN_EXTENSION_LZ4|} \
-          ${HAVE_BUILTIN_EXTENSION_SNAPPY|} \
-          ${HAVE_BUILTIN_EXTENSION_ZLIB|} \
-          ${HAVE_BUILTIN_EXTENSION_ZSTD|} \
+          ${HAVE_BUILTIN_EXTENSION_LZ4|-DHAVE_BUILTIN_EXTENSION_LZ4=1} \
+          ${HAVE_BUILTIN_EXTENSION_SNAPPY|-DHAVE_BUILTIN_EXTENSION_SNAPPY=1} \
+          ${HAVE_BUILTIN_EXTENSION_ZLIB|-DHAVE_BUILTIN_EXTENSION_ZLIB=1} \
+          ${HAVE_BUILTIN_EXTENSION_ZSTD|-DHAVE_BUILTIN_EXTENSION_ZSTD=1} \
           ${HAVE_UNITTEST} \
           ${NON_BARRIER_DIAGNOSTIC_YIELDS|} \
           ${HAVE_DIAGNOSTIC|} \
@@ -780,6 +798,14 @@ functions:
         ${PREPARE_TEST_ENV}
         ${additional_san_vars}
         ${format_test_setting}
+
+        # FIXME-WT-11931 - Helpful debug traces to be removed
+        echo "DBG - check ldd deps"
+        ldd ./t
+
+        wiredtiger_so=$(ldd ./t | grep wiredtiger | cut -d ' ' -f 3)
+        ldd $wiredtiger_so
+
         for i in $(seq ${times|1}); do
           ./format.sh -j ${num_jobs} ${format_test_script_args|} 2>&1
         done
@@ -4403,9 +4429,10 @@ tasks:
     commands:
       - func: "get project"
       - func: "compile wiredtiger"
-        vars:
-          <<: *configure_flags_with_builtins
-          NON_BARRIER_DIAGNOSTIC_YIELDS: -DNON_BARRIER_DIAGNOSTIC_YIELDS=1
+        # FIXME-11931 - Hardcoded to get test/format to run. To fix 
+        # vars:
+        #   <<: *configure_flags_with_builtins
+        #   NON_BARRIER_DIAGNOSTIC_YIELDS: -DNON_BARRIER_DIAGNOSTIC_YIELDS=1
       - func: "format test script"
         vars:
           format_test_script_args: -e "SEGFAULT_SIGNALS=all" -b "catchsegv ./t" -t 360
@@ -4669,6 +4696,20 @@ tasks:
           stats_dir: ./wiredtiger/code_statistics_report
           test-name: code_complexity
           collection: CodeComplexity
+
+
+  # FIXME-WT-11931 - We made these MSan changes while investigating WT-11845.
+  # This test runs under MSan when executed on ARM hosts but should be removed
+  # when we integrate MSan properly.
+  - name: format-stress-test-no-barrier-try-repro-wt-11845-01
+    tags: ["stress-test-no-barrier"]
+    exec_timeout_secs: 25200
+    commands:
+      - func: "get project"
+      - func: "compile wiredtiger"
+      - func: "format test script"
+        vars:
+          format_test_script_args: -e "SEGFAULT_SIGNALS=all" -b "catchsegv ./t" -t 360 -v  -F -c ../../../WT-11845.CONFIG
 
     #############################
     # Performance Tests for lsm #
@@ -6071,7 +6112,9 @@ buildvariants:
   expansions:
     ENABLE_TCMALLOC: -DENABLE_TCMALLOC=1
     additional_env_vars: export LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libeatmydata.so:$LD_PRELOAD"
-    num_jobs: $(echo "`grep -c ^processor /proc/cpuinfo`" | bc)
+    # FIXME-WT-11931 - MSan takes up more memory and we can get OOMed.
+    # Confirm that $nproc / 2 is the best number of parallel jobs.
+    num_jobs: $(echo "`grep -c ^processor /proc/cpuinfo`/ 2" | bc)
   tasks:
     # FIXME-WT-11606 Remove this temporary task.
     - name: format-11507-test
@@ -6431,10 +6474,13 @@ buildvariants:
   - ubuntu2004-arm64-large
   batchtime: 1440 # 24 hours
   expansions:
-    ENABLE_TCMALLOC: -DENABLE_TCMALLOC=1
+    # FIXME-WT-11931 - I don't think TCMalloc breaks MSan, but this needs checking.
+    ENABLE_TCMALLOC: -DENABLE_TCMALLOC=0
     CMAKE_BUILD_TYPE: -DCMAKE_BUILD_TYPE=RelWithDebInfo
     num_jobs: $(echo "`grep -c ^processor /proc/cpuinfo`" | bc)
   tasks:
+    # FIXME-WT-11931 - Needed to run the WT-11845 task that executes under MSan. Can be removed
+    - name: ".stress-test-no-barrier"
     - name: ".stress-test-1"
     - name: ".stress-test-2"
     - name: format-abort-recovery-stress-test
