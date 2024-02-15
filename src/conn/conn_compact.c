@@ -485,12 +485,12 @@ __background_compact_server(void *arg)
     WT_DECL_RET;
     WT_SESSION *wt_session;
     WT_SESSION_IMPL *session;
-    bool full_iteration, running;
+    bool cache_pressure, full_iteration, running;
 
     session = arg;
     conn = S2C(session);
     wt_session = (WT_SESSION *)session;
-    full_iteration = running = false;
+    cache_pressure = full_iteration = running = false;
 
     WT_ERR(__wt_scr_alloc(session, 1024, &config));
     WT_ERR(__wt_scr_alloc(session, 1024, &next_uri));
@@ -510,7 +510,9 @@ __background_compact_server(void *arg)
         }
 
         /* When the entire metadata file has been parsed, take a break or wait until signalled. */
-        if (full_iteration || !running) {
+        if (cache_pressure || full_iteration || !running) {
+            // TODO - reset?
+            cache_pressure = false;
             /*
              * In order to always try to parse all the candidates present in the metadata file even
              * though the compaction server may be stopped at random times, only set the URI to the
@@ -556,6 +558,11 @@ __background_compact_server(void *arg)
          * signalled and compaction is not supposed to be executed.
          */
         if (!running)
+            continue;
+
+        /* Check the state of the cache before proceeding with compaction. */
+        cache_pressure = F_ISSET(conn->cache, WT_CACHE_EVICT_DIRTY | WT_CACHE_EVICT_DIRTY_HARD);
+        if(cache_pressure)
             continue;
 
         /* Find the next URI to compact. */
