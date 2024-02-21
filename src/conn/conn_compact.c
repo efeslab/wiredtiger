@@ -511,7 +511,6 @@ __background_compact_server(void *arg)
 
         /* When the entire metadata file has been parsed, take a break or wait until signalled. */
         if (cache_pressure || full_iteration || !running) {
-            // TODO - reset?
             cache_pressure = false;
             /*
              * In order to always try to parse all the candidates present in the metadata file even
@@ -562,8 +561,12 @@ __background_compact_server(void *arg)
 
         /* Check the state of the cache before proceeding with compaction. */
         cache_pressure = F_ISSET(conn->cache, WT_CACHE_EVICT_DIRTY | WT_CACHE_EVICT_DIRTY_HARD);
-        if(cache_pressure)
+        if (cache_pressure) {
+            __wt_verbose_warning(session, WT_VERB_COMPACT, "%s",
+              "Background compact skipping table because of cache pressure.");
+            WT_STAT_CONN_INCR(session, background_compact_skipped_cache_pressure);
             continue;
+        }
 
         /* Find the next URI to compact. */
         WT_ERR_NOTFOUND_OK(__background_compact_find_next_uri(session, uri, next_uri), true);

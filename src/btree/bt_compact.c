@@ -370,8 +370,11 @@ __wt_compact(WT_SESSION_IMPL *session)
                 bm->compact_progress(bm, session);
             WT_ERR(__wt_session_compact_check_interrupted(session));
 
-            if (__wt_cache_stuck(session))
+            if (__wt_cache_stuck(session) ||
+              F_ISSET(S2C(session)->cache, WT_CACHE_EVICT_DIRTY_HARD)) {
+                WT_STAT_CONN_INCR(session, background_compact_abort_cache_pressure);
                 WT_ERR(EBUSY);
+            }
 
             first = false;
             i = 0;

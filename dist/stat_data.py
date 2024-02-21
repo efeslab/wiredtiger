@@ -212,6 +212,8 @@ conn_stats = [
     BackgroundCompactStat('background_compact_skipped', 'background compact skipped file as not meeting requirements for compaction', 'no_scale'),
     BackgroundCompactStat('background_compact_success', 'background compact successful calls', 'no_scale'),
     BackgroundCompactStat('background_compact_timeout', 'background compact timeout', 'no_scale'),
+    BackgroundCompactStat('background_compact_skipped_cache_pressure', 'background compact skipped due to cache pressure', 'no_scale'),
+    BackgroundCompactStat('background_compact_abort_cache_pressure', 'background compact aborted due to cache pressure', 'no_scale'),
 
     ##########################################
     # Block cache statistics
