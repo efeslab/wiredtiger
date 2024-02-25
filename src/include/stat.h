@@ -465,6 +465,7 @@ struct __wt_connection_stats {
     int64_t cache_eviction_walk_passes;
     int64_t cache_eviction_queue_empty;
     int64_t cache_eviction_queue_not_empty;
+    int64_t cache_eviction_server_dhandles_walked;
     int64_t cache_eviction_server_evicting;
     int64_t cache_eviction_server_skip_dirty_pages_during_checkpoint;
     int64_t cache_eviction_server_skip_metatdata_with_history;
@@ -474,6 +475,7 @@ struct __wt_connection_stats {
     int64_t cache_eviction_server_skip_trees_too_many_active_walks;
     int64_t cache_eviction_server_skip_checkpointing_trees;
     int64_t cache_eviction_server_skip_trees_stick_in_cache;
+    int64_t cache_eviction_server_skip_dirty_updates_dominating_trees;
     int64_t cache_eviction_server_skip_trees_eviction_disabled;
     int64_t cache_eviction_server_skip_trees_not_useful_before;
     int64_t cache_eviction_server_slept;

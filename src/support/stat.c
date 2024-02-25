@@ -1428,6 +1428,7 @@ static const char *const __stats_connection_desc[] = {
   "cache: eviction passes of a file",
   "cache: eviction server candidate queue empty when topping up",
   "cache: eviction server candidate queue not empty when topping up",
+  "cache: eviction server dhandles walked for eviction",
   "cache: eviction server evicting pages",
   "cache: eviction server skips dirty pages during a running checkpoint",
   "cache: eviction server skips metadata pages with history",
@@ -1438,6 +1439,7 @@ static const char *const __stats_connection_desc[] = {
   "cache: eviction server skips trees because there are too many active walks",
   "cache: eviction server skips trees that are being checkpointed",
   "cache: eviction server skips trees that are configured to stick in cache",
+  "cache: eviction server skips trees that are predominantly occupied by dirty and updates bytes",
   "cache: eviction server skips trees that disable eviction",
   "cache: eviction server skips trees that were not useful before",
   "cache: eviction server slept, because we did not make progress with eviction",
@@ -2165,6 +2167,7 @@ __wt_stat_connection_clear_single(WT_CONNECTION_STATS *stats)
     stats->cache_eviction_walk_passes = 0;
     stats->cache_eviction_queue_empty = 0;
     stats->cache_eviction_queue_not_empty = 0;
+    stats->cache_eviction_server_dhandles_walked = 0;
     stats->cache_eviction_server_evicting = 0;
     stats->cache_eviction_server_skip_dirty_pages_during_checkpoint = 0;
     stats->cache_eviction_server_skip_metatdata_with_history = 0;
@@ -2174,6 +2177,7 @@ __wt_stat_connection_clear_single(WT_CONNECTION_STATS *stats)
     stats->cache_eviction_server_skip_trees_too_many_active_walks = 0;
     stats->cache_eviction_server_skip_checkpointing_trees = 0;
     stats->cache_eviction_server_skip_trees_stick_in_cache = 0;
+    stats->cache_eviction_server_skip_dirty_updates_dominating_trees = 0;
     stats->cache_eviction_server_skip_trees_eviction_disabled = 0;
     stats->cache_eviction_server_skip_trees_not_useful_before = 0;
     stats->cache_eviction_server_slept = 0;
@@ -2871,6 +2875,8 @@ __wt_stat_connection_aggregate(WT_CONNECTION_STATS **from, WT_CONNECTION_STATS *
     to->cache_eviction_walk_passes += WT_STAT_READ(from, cache_eviction_walk_passes);
     to->cache_eviction_queue_empty += WT_STAT_READ(from, cache_eviction_queue_empty);
     to->cache_eviction_queue_not_empty += WT_STAT_READ(from, cache_eviction_queue_not_empty);
+    to->cache_eviction_server_dhandles_walked +=
+      WT_STAT_READ(from, cache_eviction_server_dhandles_walked);
     to->cache_eviction_server_evicting += WT_STAT_READ(from, cache_eviction_server_evicting);
     to->cache_eviction_server_skip_dirty_pages_during_checkpoint +=
       WT_STAT_READ(from, cache_eviction_server_skip_dirty_pages_during_checkpoint);
@@ -2888,6 +2894,8 @@ __wt_stat_connection_aggregate(WT_CONNECTION_STATS **from, WT_CONNECTION_STATS *
       WT_STAT_READ(from, cache_eviction_server_skip_checkpointing_trees);
     to->cache_eviction_server_skip_trees_stick_in_cache +=
       WT_STAT_READ(from, cache_eviction_server_skip_trees_stick_in_cache);
+    to->cache_eviction_server_skip_dirty_updates_dominating_trees +=
+      WT_STAT_READ(from, cache_eviction_server_skip_dirty_updates_dominating_trees);
     to->cache_eviction_server_skip_trees_eviction_disabled +=
       WT_STAT_READ(from, cache_eviction_server_skip_trees_eviction_disabled);
     to->cache_eviction_server_skip_trees_not_useful_before +=

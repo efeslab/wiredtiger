@@ -319,6 +319,30 @@ __wt_eviction_updates_needed(WT_SESSION_IMPL *session, double *pct_fullp)
 }
 
 /*
+ * __wt_btree_dirty_updates_cache_excess --
+ *     Return if a single btree is occupying at least half of any of our dirty/updates trigger's
+ *     cache usage.
+ */
+static inline bool
+__wt_btree_dirty_updates_cache_excess(WT_SESSION_IMPL *session, WT_BTREE *btree)
+{
+    WT_CACHE *cache;
+    uint64_t bytes_max;
+
+    cache = S2C(session)->cache;
+    bytes_max = S2C(session)->cache_size + 1;
+
+    if (__wt_cache_bytes_plus_overhead(cache, btree->bytes_dirty_intl + btree->bytes_dirty_leaf) >
+      (uint64_t)(0.5 * cache->eviction_dirty_trigger * bytes_max) / 100)
+        return (true);
+    if (__wt_cache_bytes_plus_overhead(cache, btree->bytes_updates) >
+      (uint64_t)(0.5 * cache->eviction_updates_trigger * bytes_max) / 100)
+        return (true);
+
+    return (false);
+}
+
+/*
  * __wt_btree_dominating_cache --
  *     Return if a single btree is occupying at least half of any of our target's cache usage.
  */

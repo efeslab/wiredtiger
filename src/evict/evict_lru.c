@@ -1468,6 +1468,8 @@ __evict_walk(WT_SESSION_IMPL *session, WT_EVICT_QUEUE *queue)
 retry:
     loop_count = 0;
     while (slot < max_entries && loop_count++ < conn->dhandle_count) {
+        WT_STAT_CONN_INCR(session, cache_eviction_server_dhandles_walked);
+
         /* We're done if shutting down or reconfiguring. */
         if (F_ISSET(conn, WT_CONN_CLOSING) || F_ISSET(conn, WT_CONN_RECONFIGURING))
             break;
@@ -1519,7 +1521,7 @@ retry:
         btree = dhandle->handle;
         if (btree->evict_disabled > 0) {
             WT_STAT_CONN_INCR(session, cache_eviction_server_skip_trees_eviction_disabled);
-            continue;
+            goto skip;
         }
 
         /*
@@ -1528,7 +1530,7 @@ retry:
         if (WT_BTREE_SYNCING(btree) &&
           !F_ISSET(cache, WT_CACHE_EVICT_CLEAN | WT_CACHE_EVICT_UPDATES)) {
             WT_STAT_CONN_INCR(session, cache_eviction_server_skip_checkpointing_trees);
-            continue;
+            goto skip;
         }
 
         /*
@@ -1540,7 +1542,7 @@ retry:
         if (btree->evict_priority != 0 && !__wt_cache_aggressive(session) &&
           !__wt_btree_dominating_cache(session, btree)) {
             WT_STAT_CONN_INCR(session, cache_eviction_server_skip_trees_stick_in_cache);
-            continue;
+            goto skip;
         }
 
         /*
@@ -1552,17 +1554,28 @@ retry:
          */
         if (btree->evict_ref == NULL && session->hazards.num_active > WT_EVICT_MAX_TREES) {
             WT_STAT_CONN_INCR(session, cache_eviction_server_skip_trees_too_many_active_walks);
-            continue;
+            goto skip;
         }
 
         /*
          * If we are filling the queue, skip files that haven't been useful in the past.
+         *
+         * If the file is contributing heavily to our cache usage then ignore skipping it.
          */
-        if (btree->evict_walk_period != 0 && btree->evict_walk_skips++ < btree->evict_walk_period) {
+        if (!__wt_btree_dirty_updates_cache_excess(session, btree) &&
+          btree->evict_walk_period != 0 && btree->evict_walk_skips++ < btree->evict_walk_period) {
             WT_STAT_CONN_INCR(session, cache_eviction_server_skip_trees_not_useful_before);
-            continue;
+            goto skip;
         }
         btree->evict_walk_skips = 0;
+
+        if (0) {
+skip:
+            if (__wt_btree_dirty_updates_cache_excess(session, btree))
+                WT_STAT_CONN_INCR(
+                  session, cache_eviction_server_skip_dirty_updates_dominating_trees);
+            continue;
+        }
 
         (void)__wt_atomic_addi32(&dhandle->session_inuse, 1);
         incr = true;
