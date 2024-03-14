@@ -544,6 +544,7 @@ struct __wt_cursor_stat {
     int stats_base;  /* Base statistics value */
     int stats_count; /* Count of statistics values */
     int (*stats_desc)(WT_CURSOR_STAT *, int, const char **);
+    bool (*stats_user_facing)(WT_CURSOR_STAT *, int, bool *);
     /* Statistics descriptions */
     int (*next_set)(WT_SESSION_IMPL *, WT_CURSOR_STAT *, bool, bool); /* Advance to next set */
 

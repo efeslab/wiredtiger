@@ -177,6 +177,21 @@ __wt_stat_''' + name + '''_desc(WT_CURSOR_STAT *cst, int slot, const char **p)
 }
 ''')
 
+    f.write('static const bool __stats_' + name + '_user_facing[] = {\n')
+    for l in statlist:
+        f.write('\t' + str(l.user_facing).lower() + ',\n')
+    f.write('};\n')
+
+    f.write('''
+bool
+__wt_stat_''' + name + '''_user_facing(WT_CURSOR_STAT *cst, int slot, bool *p)
+{
+\tWT_UNUSED(cst);
+\t*p = __stats_''' + name + '''_user_facing[slot];
+\treturn (0);
+}
+''')
+
     f.write('''
 void
 __wt_stat_''' + name + '_init_single(WT_' + name.upper() + '''_STATS *stats)

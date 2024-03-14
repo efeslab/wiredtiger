@@ -86,6 +86,8 @@ __curstat_get_value(WT_CURSOR *cursor, ...)
     size_t size;
     uint64_t *v;
     const char *desc, **p;
+    bool *b;
+    bool user_facing;
     va_list ap;
 
     cst = (WT_CURSOR_STAT *)cursor;
@@ -94,11 +96,13 @@ __curstat_get_value(WT_CURSOR *cursor, ...)
     WT_ERR(__cursor_needvalue(cursor));
 
     WT_ERR(cst->stats_desc(cst, WT_STAT_KEY_OFFSET(cst), &desc));
+    WT_ERR(cst->stats_user_facing(cst, WT_STAT_KEY_OFFSET(cst), &user_facing));
+    /* TODO */
     if (F_ISSET(cursor, WT_CURSTD_RAW)) {
-        WT_ERR(__wt_struct_size(session, &size, cursor->value_format, desc, cst->pv.data, cst->v));
+        WT_ERR(__wt_struct_size(session, &size, cursor->value_format, desc, cst->pv.data, cst->v, user_facing));
         WT_ERR(__wt_buf_initsize(session, &cursor->value, size));
         WT_ERR(__wt_struct_pack(
-          session, cursor->value.mem, size, cursor->value_format, desc, cst->pv.data, cst->v));
+          session, cursor->value.mem, size, cursor->value_format, desc, cst->pv.data, cst->v, user_facing));
 
         va_start(ap, cursor);
         item = va_arg(ap, WT_ITEM *);
@@ -117,6 +121,8 @@ __curstat_get_value(WT_CURSOR *cursor, ...)
             *p = cst->pv.data;
         if ((v = va_arg(ap, uint64_t *)) != NULL)
             *v = cst->v;
+        if ((b = va_arg(ap, bool *)) != NULL)
+            *b = user_facing;
         va_end(ap);
     }
 
@@ -379,6 +385,7 @@ __curstat_conn_init(WT_SESSION_IMPL *session, WT_CURSOR_STAT *cst)
     cst->stats_base = WT_CONNECTION_STATS_BASE;
     cst->stats_count = sizeof(WT_CONNECTION_STATS) / sizeof(int64_t);
     cst->stats_desc = __wt_stat_connection_desc;
+    cst->stats_user_facing = __wt_stat_connection_user_facing;
 }
 
 /*
@@ -456,6 +463,7 @@ __wt_curstat_dsrc_final(WT_CURSOR_STAT *cst)
     cst->stats_base = WT_DSRC_STATS_BASE;
     cst->stats_count = sizeof(WT_DSRC_STATS) / sizeof(int64_t);
     cst->stats_desc = __wt_stat_dsrc_desc;
+    cst->stats_user_facing = __wt_stat_dsrc_user_facing;
 }
 
 /*
@@ -519,6 +527,21 @@ __curstat_join_desc(WT_CURSOR_STAT *cst, int slot, const char **resultp)
 }
 
 /*
+ * __curstat_join_user_facing --
+ *     TODO
+ */
+static bool
+__curstat_join_user_facing(WT_CURSOR_STAT *cst, int slot, bool *resultp)
+{
+
+    WT_UNUSED(slot);
+    WT_UNUSED(cst);
+    printf("TODO IMPLEMENT ME\n");
+    *resultp = false;
+    return (0);
+}
+
+/*
  * __curstat_join_init --
  *     Initialize the statistics for a joined cursor.
  */
@@ -542,6 +565,7 @@ __curstat_join_init(
     cst->stats_base = WT_JOIN_STATS_BASE;
     cst->stats_count = sizeof(WT_JOIN_STATS) / sizeof(int64_t);
     cst->stats_desc = __curstat_join_desc;
+    cst->stats_user_facing = __curstat_join_user_facing;
     cst->next_set = __curstat_join_next_set;
     return (0);
 }
@@ -564,6 +588,7 @@ __curstat_session_init(WT_SESSION_IMPL *session, WT_CURSOR_STAT *cst)
     cst->stats_base = WT_SESSION_STATS_BASE;
     cst->stats_count = sizeof(WT_SESSION_STATS) / sizeof(int64_t);
     cst->stats_desc = __wt_stat_session_desc;
+    cst->stats_user_facing = __wt_stat_session_user_facing;
 }
 
 /*

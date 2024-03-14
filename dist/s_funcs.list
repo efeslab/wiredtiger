@@ -13,6 +13,8 @@ __wt_bulk_insert_row
 __wt_bulk_insert_var
 __wt_config_getone
 __wt_crc32c_le
+__wt_stat_dsrc_user_facing
+__wt_stat_join_user_facing
 __wt_curhs_open
 __wt_cursor_get_raw_value
 __wt_debug_addr
