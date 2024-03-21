@@ -387,7 +387,7 @@ __wt_capacity_throttle(WT_SESSION_IMPL *session, uint64_t bytes, WT_THROTTLE_TYP
         WT_STAT_CONN_INCRV(session, capacity_bytes_read, bytes);
         break;
     }
-    total_capacity = cap->total;
+    total_capacity = __wt_atomic_load64(&cap->total);
 
     /*
      * Right now no subsystem can be individually turned off, but it is certainly a possibility to

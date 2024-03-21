@@ -106,7 +106,7 @@ __log_slot_close(WT_SESSION_IMPL *session, WT_LOGSLOT *slot, bool *releasep, boo
     if (slot == NULL)
         return (WT_NOTFOUND);
 retry:
-    old_state = slot->slot_state;
+    old_state = __wt_atomic_loadiv64(&slot->slot_state);
     /*
      * If this close is coming from a forced close and a thread is in the middle of using the slot,
      * return EBUSY. The caller can decide if retrying is necessary or not.
@@ -326,7 +326,7 @@ __log_slot_switch_internal(WT_SESSION_IMPL *session, WT_MYSLOT *myslot, bool for
      * If the current active slot is unused and this is a forced switch, we're done. If this is a
      * non-forced switch we always switch because the slot could be part of an unbuffered operation.
      */
-    joined = WT_LOG_SLOT_JOINED(slot->slot_state);
+    joined = WT_LOG_SLOT_JOINED(__wt_atomic_loadiv64(&slot->slot_state));
     if (joined == 0 && forced && !F_ISSET(log, WT_LOG_FORCE_NEWFILE)) {
         WT_STAT_CONN_INCR(session, log_force_write_skip);
         if (did_work != NULL)
@@ -684,7 +684,7 @@ __wt_log_slot_free(WT_SESSION_IMPL *session, WT_LOGSLOT *slot)
      * initialize the rest of the slot.
      */
     WT_UNUSED(session);
-    slot->flags_atomic = WT_SLOT_INIT_FLAGS;
+    __wt_atomic_store16(&slot->flags_atomic, WT_SLOT_INIT_FLAGS);
     slot->slot_error = 0;
     slot->slot_state = WT_LOG_SLOT_FREE;
 }

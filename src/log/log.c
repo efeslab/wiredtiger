@@ -1940,7 +1940,7 @@ __wt_log_release(WT_SESSION_IMPL *session, WT_LOGSLOT *slot, bool *freep)
       FLD_ISSET(conn->server_flags, WT_CONN_SERVER_LOG)) {
         if (freep != NULL)
             *freep = false;
-        slot->slot_state = WT_LOG_SLOT_WRITTEN;
+        __wt_atomic_storeiv64(&slot->slot_state, WT_LOG_SLOT_WRITTEN);
         /*
          * After this point the worker thread owns the slot. There is nothing more to do but return.
          */
