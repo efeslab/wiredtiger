@@ -186,6 +186,11 @@ define_build_mode(Coverage
     DEPENDS "NOT MSVC"
 )
 
+define_build_mode(CozProfiler
+    # Disable coz on MSVC compilers (unsupported).
+    DEPENDS "NOT MSVC"
+)
+
 # Set the WiredTiger default build type to Debug.
 # Primary users of the build are our developers, who want as much help diagnosing
 # issues as possible. Builds targeted for release to customers should switch to a "Release" setting.

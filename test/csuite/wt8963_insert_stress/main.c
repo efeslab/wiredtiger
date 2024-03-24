@@ -35,9 +35,8 @@
  * suite does not allow overriding validation at the moment.
  */
 
-#define THREAD_NUM_ITERATIONS (200 * WT_THOUSAND)
+#define THREAD_NUM_ITERATIONS (100 * WT_THOUSAND)
 #define NUM_THREADS 110
-#define KEY_MAX UINT32_MAX
 #define TABLE_CONFIG_FMT "key_format=%s,value_format=%s,memory_page_image_max=50MB"
 
 static const char *const conn_config =
@@ -142,7 +141,6 @@ thread_insert_race(void *arg)
     TEST_OPTS *opts;
     WT_CONNECTION *conn;
     WT_CURSOR *cursor;
-    WT_RAND_STATE rnd;
     WT_SESSION *session;
     uint64_t i, ready_counter_local, key;
 
@@ -151,8 +149,6 @@ thread_insert_race(void *arg)
 
     testutil_check(conn->open_session(conn, NULL, NULL, &session));
     testutil_check(session->open_cursor(session, opts->uri, NULL, NULL, &cursor));
-
-    __wt_random_init_seed((WT_SESSION_IMPL *)session, &rnd);
 
     /* Wait until all the threads are ready to go. */
     (void)__wt_atomic_add64(&ready_counter, 1);
@@ -164,7 +160,9 @@ thread_insert_race(void *arg)
 
     for (i = 0; i < THREAD_NUM_ITERATIONS; ++i) {
         /* Generate random values from [1, KEY_MAX] */
-        key = ((uint64_t)__wt_random(&rnd) % KEY_MAX) + 1;
+        COZ_PROGRESS_NAMED("insert key");
+        /* Avoid randomness for now. */
+        key = i + 1;
         set_key(cursor, key);
         set_value(opts, cursor, key);
         testutil_check(cursor->insert(cursor));

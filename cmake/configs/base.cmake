@@ -17,6 +17,29 @@ if("${CMAKE_BUILD_TYPE}" MATCHES "^(Release|RelWithDebInfo)$")
     set(default_have_diagnostics OFF)
 endif()
 
+if("${CMAKE_BUILD_TYPE}" MATCHES "^(CozProfiler)$")
+    # Coz requires debug symbols to track latency and throughput
+    add_compile_options(-g3)
+    add_compile_options(-ggdb3)
+
+    # FIXME - use find_package to setup coz. For now just assuming it's present in /usr/include thanks to apt-install
+    # find_package(coz-profiler)
+    include_directories(/usr/include)
+
+    if(NOT HAVE_LIBCOZ)
+        # FIXME - This should be fatal once CMake is working correctly. 
+        # message(FATAL_ERROR " Coz is not installed on the system")    
+        message(ERROR " Can't find Coz installed on the system. WiredTiger should still build correctly for this demo.")    
+    endif()
+
+    # Force static linking. I'm not sure if coz supports profiling of .so libs.
+    if(ENABLE_SHARED)
+        message(ERROR " Coz requires that WiredTiger is built statically for now. Forcing static mode.")    
+        set(ENABLE_SHARED OFF)
+        set(ENABLE_STATIC ON)
+    endif()
+endif()
+
 # Enable python if we have the minimum version.
 set(python_libs)
 set(python_version)

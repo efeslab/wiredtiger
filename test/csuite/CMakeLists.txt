@@ -390,6 +390,7 @@ define_c_test(
     SOURCES wt8963_insert_stress/main.c
     DIR_NAME wt8963_insert_stress
     ARGUMENTS -h $<SHELL_PATH:$<TARGET_FILE_DIR:test_wt8963_insert_stress>/WT_HOME>
+    ADDITIONAL_FILES ${CMAKE_CURRENT_SOURCE_DIR}/wt8963_insert_stress/run_with_coz.sh
     DEPENDS "WT_POSIX"
     # This test takes over an hour under ASan testing
     LABEL "long_running"

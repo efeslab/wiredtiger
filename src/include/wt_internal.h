@@ -61,6 +61,9 @@ extern "C" {
 #include <windows.h>
 #endif
 
+/* FIXME - protect this behind a HAVE_COZ build flag */
+#include <coz.h>
+
 /*
  * DO NOT EDIT: automatically built by dist/s_typedef.
  * Forward type declarations for internal types: BEGIN

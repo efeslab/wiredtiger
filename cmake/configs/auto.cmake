@@ -284,6 +284,13 @@ config_lib(
 )
 
 config_lib(
+    HAVE_LIBCOZ
+    "coz library exists."
+    LIB "coz"
+    HEADER "coz/coz.h"
+)
+
+config_lib(
     HAVE_LIBSODIUM
     "sodium library exists."
     LIB "sodium"

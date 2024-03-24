@@ -87,8 +87,9 @@
 #define FORMAT_PAD_BYTE '-'  /* modify pad byte */
 #define MAX_MODIFY_ENTRIES 5 /* maximum change vectors */
 #define REALLOC_MAX_TABLES 5 /* maximum number of tables with realloc_exact and realloc_malloc */
-#define STR(s) #s
-#define XSTR(s) STR(s)
+/* Can't use STR, conflicts with a macro in Coz */
+#define WT_STR(s) #s
+#define XSTR(s) WT_STR(s)
 
 #include "config.h"
 extern CONFIG configuration_list[];
