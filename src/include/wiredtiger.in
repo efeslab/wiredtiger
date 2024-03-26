@@ -1731,6 +1731,8 @@ struct __wt_session {
      * isolation level., a string\, chosen from the following options: \c "read-uncommitted"\, \c
      * "read-committed"\, \c "snapshot"; default empty.}
      * @config{name, name of the transaction for tracing and debugging., a string; default empty.}
+     * @config{no_prepare, inform WiredTiger that the transaction will not call prepare\, allowing
+     * for some optimizations., a boolean flag; default \c false.}
      * @config{no_timestamp, allow a commit without a timestamp\, creating values that have "always
      * existed" and are visible regardless of timestamp.  See @ref timestamp_txn_api., a boolean
      * flag; default \c false.}

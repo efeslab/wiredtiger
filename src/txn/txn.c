@@ -712,6 +712,10 @@ __wt_txn_config(WT_SESSION_IMPL *session, WT_CONF *conf)
     if (cval.val)
         F_SET(txn, WT_TXN_TS_ROUND_PREPARED);
 
+    WT_ERR(__wt_conf_gets_def(session, conf, no_prepare, 0, &cval));
+    if (cval.val)
+        F_SET(txn, WT_TXN_PREPARE_BANNED);
+
     /* Check if read timestamp needs to be rounded up. */
     WT_ERR(__wt_conf_gets_def(session, conf, Roundup_timestamps.read, 0, &cval));
     if (cval.val)
@@ -2086,6 +2090,7 @@ __wt_txn_prepare(WT_SESSION_IMPL *session, const char *cfg[])
 
     WT_ASSERT(session, F_ISSET(txn, WT_TXN_RUNNING));
     WT_ASSERT(session, !F_ISSET(txn, WT_TXN_ERROR));
+    WT_ASSERT(session, !F_ISSET(txn, WT_TXN_PREPARE_BANNED));
 
     /*
      * A transaction should not have updated any of the logged tables, if debug mode logging is not

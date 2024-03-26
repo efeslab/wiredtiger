@@ -1744,6 +1744,9 @@ methods = {
         allow a commit without a timestamp, creating values that have "always existed" and are
         visible regardless of timestamp. See @ref timestamp_txn_api''',
         type='boolean'),
+    Config('no_prepare', 'false', '''
+        inform WiredTiger that the transaction will not call prepare, allowing for some
+        optimizations.''', type='boolean'),
     Config('operation_timeout_ms', '0', r'''
         when non-zero, a requested limit on the time taken to complete operations in this
         transaction. Time is measured in real time milliseconds from the start of each WiredTiger
