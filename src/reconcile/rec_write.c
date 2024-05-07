@@ -1781,13 +1781,16 @@ __rec_supd_move(WT_SESSION_IMPL *session, WT_MULTI *multi, WT_SAVE_UPD *supd, ui
 {
     uint32_t i;
 
+    __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s:Changed multi->supd_restore from %s to false", __func__, multi->supd_restore ? "true" : "false");
     multi->supd_restore = false;
 
     WT_RET(__wt_calloc_def(session, n, &multi->supd));
 
     for (i = 0; i < n; ++i) {
-        if (supd->restore)
+        if (supd->restore) {
+            __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s:[%" PRIu32 "] Changed multi->supd_restore from %s to true", __func__, i, multi->supd_restore ? "true" : "false");
             multi->supd_restore = true;
+        }
         multi->supd[i] = *supd++;
     }
 
@@ -1824,6 +1827,7 @@ __rec_split_write_supd(
      * The last block gets all remaining saved updates.
      */
     if (last_block) {
+        __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s: Move cached updates [0, %" PRIu32 "] to current page", __func__, r->supd_next - 1u);
         WT_RET(__rec_supd_move(session, multi, r->supd, r->supd_next));
         r->supd_next = 0;
         r->supd_memsize = 0;
@@ -1860,6 +1864,7 @@ __rec_split_write_supd(
             if (WT_INSERT_RECNO(supd->ins) >= next->recno)
                 break;
     if (i != 0) {
+        __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s: Move cached updates [0, %" PRIu32 "] to current page", __func__, i - 1u);
         WT_ERR(__rec_supd_move(session, multi, r->supd, i));
 
         /*
@@ -1867,6 +1872,9 @@ __rec_split_write_supd(
          * the cached list (we maintain the saved updates in sorted order, new saved updates must be
          * appended to the list).
          */
+        if (i < r->supd_next) {
+            __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s: Slide cached updates [%" PRIu32 ", %" PRIu32 "] to cached updates [%" PRIu32 ", %" PRIu32 "]", __func__, i, r->supd_next - 1u, 0u, r->supd_next - 1u - i);
+        }
         r->supd_memsize = 0;
         for (j = 0; i < r->supd_next; ++j, ++i) {
             /* Account for the remaining update memory. */
@@ -2081,6 +2089,7 @@ __rec_split_write(WT_SESSION_IMPL *session, WT_RECONCILE *r, WT_REC_CHUNK *chunk
     default:
         return (__wt_illegal_value(session, page->type));
     }
+    __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s:Changed supd_restore from %s to false", __func__, multi->supd_restore ? "true" : "false");
     multi->supd_restore = false;
 
     /* Set the key. */

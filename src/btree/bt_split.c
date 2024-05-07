@@ -1455,11 +1455,32 @@ __split_multi_inmem(WT_SESSION_IMPL *session, WT_PAGE *orig, WT_MULTI *multi, WT
          * size of the page is correct.
          */
         if (supd->onpage_upd != NULL && !F_ISSET(S2C(session), WT_CONN_IN_MEMORY)) {
+            const WT_UPDATE * on_upd = supd->onpage_upd;
+            __wt_verbose_error(session, WT_VERB_EVICT,
+                                "XXX:%u. update restore eviction: first-upd-to-truncate (onpage_upd) %p: txnid 0x%" PRIx64
+                                ", prev_durable_ts %" PRIu64 ", durable_ts %" PRIu64 ", start_ts %" PRIu64
+                                ", size 0x%" PRIx32 ", type %" PRIu8 ", flags 0x%" PRIx8 "%s",
+                                i, on_upd, on_upd->txnid, on_upd->prev_durable_ts, on_upd->durable_ts, on_upd->start_ts,
+                                on_upd->size, on_upd->type, on_upd->flags, on_upd->next ? " Next" : "");
+
+            __wt_verbose_error(session, WT_VERB_EVICT,
+                                "XXX:update restore eviction: update-to-apply (upd) %p: txnid 0x%" PRIx64
+                                ", prev_durable_ts %" PRIu64 ", durable_ts %" PRIu64 ", start_ts %" PRIu64
+                                ", size 0x%" PRIx32 ", type %" PRIu8 ", flags 0x%" PRIx8 " %s",
+                                upd, upd->txnid, upd->prev_durable_ts, upd->durable_ts, upd->start_ts,
+                                upd->size, upd->type, upd->flags, upd->next ? " Next" : "");
             /*
              * If there is an on-page tombstone we need to remove it as well while performing update
              * restore eviction.
              */
             tmp = supd->onpage_tombstone != NULL ? supd->onpage_tombstone : supd->onpage_upd;
+
+            __wt_verbose_error(session, WT_VERB_EVICT, "XXX:update restore eviction: %s (tmp) %p: txnid 0x%" PRIx64
+                                ", prev_durable_ts %" PRIu64 ", durable_ts %" PRIu64 ", start_ts %" PRIu64
+                                ", size 0x%" PRIx32 ", type %" PRIu8 ", flags 0x%" PRIx8 " %s",
+                                supd->onpage_tombstone ? "first-truncate-tombstone" : "first-truncate-upd",
+                                tmp, tmp->txnid, tmp->prev_durable_ts, tmp->durable_ts, tmp->start_ts,
+                                tmp->size, tmp->type, tmp->flags, tmp->next ? " Next" : "");
 
             /*
              * We have decided to restore this update chain so it must have newer updates than the
@@ -1474,7 +1495,18 @@ __split_multi_inmem(WT_SESSION_IMPL *session, WT_PAGE *orig, WT_MULTI *multi, WT
              */
             for (prev_onpage = upd; prev_onpage->next != NULL && prev_onpage->next != tmp;
                  prev_onpage = prev_onpage->next)
-                ;
+                __wt_verbose_error(session, WT_VERB_EVICT,
+                                    "XXX:update restore eviction: To-truncate %p: txnid 0x%" PRIx64
+                                    ", prev_durable_ts %" PRIu64 ", durable_ts %" PRIu64 ", start_ts %" PRIu64
+                                    ", size 0x%" PRIx32 ", type %" PRIu8 ", flags 0x%" PRIx8 " %s",
+                                    prev_onpage, prev_onpage->txnid, prev_onpage->prev_durable_ts, prev_onpage->durable_ts, prev_onpage->start_ts,
+                                    prev_onpage->size, prev_onpage->type, prev_onpage->flags, prev_onpage->next ? " Next" : "");
+            __wt_verbose_error(session, WT_VERB_EVICT,
+                                "XXX:update restore eviction: truncate-after (prev_onpage) %p: txnid 0x%" PRIx64
+                                ", prev_durable_ts %" PRIu64 ", durable_ts %" PRIu64 ", start_ts %" PRIu64
+                                ", size 0x%" PRIx32 ", type %" PRIu8 ", flags 0x%" PRIx8 " %s",
+                                prev_onpage, prev_onpage->txnid, prev_onpage->prev_durable_ts, prev_onpage->durable_ts, prev_onpage->start_ts,
+                                prev_onpage->size, prev_onpage->type, prev_onpage->flags, prev_onpage->next ? " Next" : "");
             WT_ASSERT(session, prev_onpage->next == tmp);
 #ifdef HAVE_DIAGNOSTIC
             /*
