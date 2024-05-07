@@ -39,10 +39,10 @@ class test_upd01(wttest.WiredTigerTestCase):
     ]
     scenarios = make_scenarios(key_format_values)
     
-    def evict(self, k, do_assert, do_transaction):
+    def evict(self, uri, k, do_assert, do_transaction):
         # Configure debug behavior on a cursor to evict the positioned page on cursor reset
         # and evict the page.
-        evict_cursor = self.session.open_cursor(self.uri, None, "debug=(release_evict)")
+        evict_cursor = self.session.open_cursor(uri, None, "debug=(release_evict)")
         if do_transaction: # Used by BF-32981, but not WT-12096.
             self.session.begin_transaction()
         evict_cursor.set_key(k)
@@ -85,7 +85,7 @@ class test_upd01(wttest.WiredTigerTestCase):
         try:
             self.pr("start checkpoint")
             ckpt.start()
-            self.evict(1, True, False)
+            self.evict(uri, 1, True, False)
         finally:
             done.set()          # Signal chkpt to exit.
             ckpt.join()
