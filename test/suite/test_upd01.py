@@ -26,13 +26,14 @@
 # ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
-import wiredtiger, wttest
+import threading
+import wiredtiger, wttest, wtthread
 from wtscenario import make_scenarios
 
 # test_upd01.py
 # Test an update restore eviction
 class test_upd01(wttest.WiredTigerTestCase):
-    conn_config = 'cache_size=2MB,eviction=(threads_max=1)'
+    conn_config = 'cache_size=2MB,eviction=(threads_max=1),statistics=(all)'
     key_format_values = [
         ('column', dict(key_format='r')),
     ]
@@ -61,10 +62,20 @@ class test_upd01(wttest.WiredTigerTestCase):
         cursor2[1] = value1
         cursor2.close()         # To delete hazard pointers
 
-        # Configure debug behavior on a cursor to evict the positioned page on cursor reset
-        # and evict the page.
-        self.session.breakpoint()
-        evict_cursor = self.session.open_cursor(uri, None, "debug=(release_evict)")
-        evict_cursor.set_key(1)
-        self.assertEquals(evict_cursor.search(), 0)
-        evict_cursor.reset()
+        # Create a checkpoint in parallel with the evcition below.
+        done = threading.Event()
+        ckpt = wtthread.checkpoint_thread(self.conn, done)
+        try:
+            self.pr("start checkpoint")
+            ckpt.start()
+
+            # Configure debug behavior on a cursor to evict the positioned page on cursor reset
+            # and evict the page.
+            self.session.breakpoint()
+            evict_cursor = self.session.open_cursor(uri, None, "debug=(release_evict)")
+            evict_cursor.set_key(1)
+            self.assertEquals(evict_cursor.search(), 0)
+            evict_cursor.reset()
+        finally:
+            done.set()          # Signal chkpt to exit.
+            ckpt.join()
