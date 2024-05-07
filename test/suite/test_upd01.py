@@ -33,18 +33,35 @@ from wtscenario import make_scenarios
 # test_upd01.py
 # Test an update restore eviction
 class test_upd01(wttest.WiredTigerTestCase):
-    conn_config = 'cache_size=2MB,eviction=(threads_max=1),statistics=(all)'
+    conn_config = 'cache_size=2MB,eviction=(threads_max=1),statistics=(all),timing_stress_for_test=[checkpoint_slow]'
     key_format_values = [
         ('column', dict(key_format='r')),
     ]
     scenarios = make_scenarios(key_format_values)
+    
+    def evict(self, k, do_assert, do_transaction):
+        # Configure debug behavior on a cursor to evict the positioned page on cursor reset
+        # and evict the page.
+        evict_cursor = self.session.open_cursor(self.uri, None, "debug=(release_evict)")
+        if do_transaction: # Used by BF-32981, but not WT-12096.
+            self.session.begin_transaction()
+        evict_cursor.set_key(k)
+        if do_assert: # Used by WT-12096, but not BF-32981
+            self.assertEquals(evict_cursor.search(), 0)
+        else:
+            evict_cursor.search()
+
+        self.session.breakpoint()
+
+        evict_cursor.reset()
+        evict_cursor.close() # Used by BF-32981, but not WT-12096
+        if do_transaction: # Used by BF-32981, but not WT-12096
+            self.session.rollback_transaction()
 
     def test_update_restore_eviction(self):
         uri = "table:test_upd01-update_restore_eviction"
         create_params = 'value_format=S,key_format={}'.format(self.key_format)
         value1 = 'abcedfghijklmnopqrstuvwxyz' * 5
-        value2 = 'b' * 100
-        valuebig = 'e' * 1000
         self.session.create(uri, create_params)
         cursor = self.session.open_cursor(uri)
 
@@ -68,14 +85,7 @@ class test_upd01(wttest.WiredTigerTestCase):
         try:
             self.pr("start checkpoint")
             ckpt.start()
-
-            # Configure debug behavior on a cursor to evict the positioned page on cursor reset
-            # and evict the page.
-            self.session.breakpoint()
-            evict_cursor = self.session.open_cursor(uri, None, "debug=(release_evict)")
-            evict_cursor.set_key(1)
-            self.assertEquals(evict_cursor.search(), 0)
-            evict_cursor.reset()
+            self.evict(1, True, False)
         finally:
             done.set()          # Signal chkpt to exit.
             ckpt.join()
