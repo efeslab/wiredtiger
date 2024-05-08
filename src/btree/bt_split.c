@@ -1383,6 +1383,7 @@ __split_multi_inmem(WT_SESSION_IMPL *session, WT_PAGE *orig, WT_MULTI *multi, WT
     WT_UPDATE *prev_onpage, *upd, *tmp;
     uint64_t orig_read_gen, recno;
     uint32_t i, slot;
+    uint32_t idx_discard, idx_end; /* XXX TEMPORARY */
     bool prepare;
 
     /*
@@ -1421,8 +1422,10 @@ __split_multi_inmem(WT_SESSION_IMPL *session, WT_PAGE *orig, WT_MULTI *multi, WT
      * If there are no updates to apply to the page, we're done. Otherwise, there are updates we
      * need to restore.
      */
-    if (multi->supd_entries == 0)
+    if (multi->supd_entries == 0) {
+        __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s:Restored page without updates", __func__);
         return (0);
+    }
     WT_ASSERT(session, multi->supd_restore);
 
     if (orig->type == WT_PAGE_ROW_LEAF)
@@ -1474,6 +1477,8 @@ __split_multi_inmem(WT_SESSION_IMPL *session, WT_PAGE *orig, WT_MULTI *multi, WT
              * restore eviction.
              */
             tmp = supd->onpage_tombstone != NULL ? supd->onpage_tombstone : supd->onpage_upd;
+            __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s: multi[%" PRIu32 "] Remove %s %p",
+                                __func__, i, supd->onpage_tombstone ? "tombstone" : "updates", tmp);
 
             __wt_verbose_error(session, WT_VERB_EVICT, "XXX:update restore eviction: %s (tmp) %p: txnid 0x%" PRIx64
                                 ", prev_durable_ts %" PRIu64 ", durable_ts %" PRIu64 ", start_ts %" PRIu64
@@ -1493,14 +1498,22 @@ __split_multi_inmem(WT_SESSION_IMPL *session, WT_PAGE *orig, WT_MULTI *multi, WT
              * Move the pointer to the position before the onpage value and truncate all the updates
              * starting from the onpage value.
              */
+            idx_discard = 0u;
             for (prev_onpage = upd; prev_onpage->next != NULL && prev_onpage->next != tmp;
-                 prev_onpage = prev_onpage->next)
+                 prev_onpage = prev_onpage->next) {
+                ++idx_discard;
                 __wt_verbose_error(session, WT_VERB_EVICT,
                                     "XXX:update restore eviction: To-truncate %p: txnid 0x%" PRIx64
                                     ", prev_durable_ts %" PRIu64 ", durable_ts %" PRIu64 ", start_ts %" PRIu64
                                     ", size 0x%" PRIx32 ", type %" PRIu8 ", flags 0x%" PRIx8 " %s",
                                     prev_onpage, prev_onpage->txnid, prev_onpage->prev_durable_ts, prev_onpage->durable_ts, prev_onpage->start_ts,
                                     prev_onpage->size, prev_onpage->type, prev_onpage->flags, prev_onpage->next ? " Next" : "");
+            }
+            if (idx_discard > 0) {
+                __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s: multi[%" PRIu32 "] In memory [0, %" PRIu32 "] updates", __func__, i, idx_discard - 1u);
+            } else {
+                __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s: multi[%" PRIu32 "] No in memory updates", __func__, i);
+            }
             __wt_verbose_error(session, WT_VERB_EVICT,
                                 "XXX:update restore eviction: truncate-after (prev_onpage) %p: txnid 0x%" PRIx64
                                 ", prev_durable_ts %" PRIu64 ", durable_ts %" PRIu64 ", start_ts %" PRIu64
@@ -1508,6 +1521,7 @@ __split_multi_inmem(WT_SESSION_IMPL *session, WT_PAGE *orig, WT_MULTI *multi, WT
                                 prev_onpage, prev_onpage->txnid, prev_onpage->prev_durable_ts, prev_onpage->durable_ts, prev_onpage->start_ts,
                                 prev_onpage->size, prev_onpage->type, prev_onpage->flags, prev_onpage->next ? " Next" : "");
             WT_ASSERT(session, prev_onpage->next == tmp);
+            idx_end = idx_discard;
 #ifdef HAVE_DIAGNOSTIC
             /*
              * During update restore eviction we remove anything older than the on-page update,
@@ -1518,9 +1532,21 @@ __split_multi_inmem(WT_SESSION_IMPL *session, WT_PAGE *orig, WT_MULTI *multi, WT
              * This assertion checks that there aren't any unexpected updates between that tombstone
              * and the subsequent value which both make up the on-page value.
              */
-            for (; tmp != NULL && tmp != supd->onpage_upd; tmp = tmp->next)
+            for (; tmp != NULL && tmp != supd->onpage_upd; tmp = tmp->next) {
                 WT_ASSERT(session, tmp == supd->onpage_tombstone || tmp->txnid == WT_TXN_ABORTED);
+                ++idx_end;
+            }
 #endif
+            for (; tmp != NULL; tmp = tmp->next) {
+                ++idx_end;
+            }
+            if (idx_discard != idx_end) {
+                __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s: multi[%" PRIu32 "] Truncate on-disk [%" PRIu32 ", %" PRIu32 "]",
+                                    __func__, i, idx_discard, idx_end - 1u);
+            } else {
+                __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s: multi[%" PRIu32 "] No truncate on-disk",
+                                    __func__, i);
+            }
             prev_onpage->next = NULL; /* Discard upates/tombstone after prev_onpage */
         }
 
