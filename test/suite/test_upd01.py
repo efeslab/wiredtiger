@@ -38,7 +38,7 @@ class test_upd01(wttest.WiredTigerTestCase):
         ('column', dict(key_format='r')),
     ]
     scenarios = make_scenarios(key_format_values)
-    
+
     def evict(self, uri, k, do_assert, do_transaction):
         # Configure debug behavior on a cursor to evict the positioned page on cursor reset
         # and evict the page.
