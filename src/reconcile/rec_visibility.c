@@ -471,8 +471,11 @@ __rec_validate_upd_chain(WT_SESSION_IMPL *session, WT_RECONCILE *r, WT_UPDATE *s
             prev_upd->start_ts == prev_upd->durable_ts || !WT_TIME_WINDOW_HAS_STOP(&vpack->tw) ||
             prev_upd->durable_ts >= vpack->tw.durable_stop_ts,
           "Durable timestamps cannot be out of order for prepared updates");
-        if (prev_upd->start_ts < vpack->tw.start_ts ||
-          (WT_TIME_WINDOW_HAS_STOP(&vpack->tw) && prev_upd->start_ts < vpack->tw.stop_ts)) {
+        /* If prev_upd is globally visible it can be evicted. Thus this check applies only if
+         * prev_upd is not globally visible. */
+        if (!__wt_txn_upd_visible_all(session, prev_upd) &&
+          (prev_upd->start_ts < vpack->tw.start_ts ||
+            (WT_TIME_WINDOW_HAS_STOP(&vpack->tw) && prev_upd->start_ts < vpack->tw.stop_ts))) {
             WT_ASSERT(session, prev_upd->start_ts == WT_TS_NONE);
             WT_STAT_CONN_DATA_INCR(session, cache_eviction_blocked_no_ts_checkpoint_race_1);
             return (EBUSY);
