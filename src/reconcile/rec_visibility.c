@@ -17,8 +17,6 @@ __rec_update_save(WT_SESSION_IMPL *session, WT_RECONCILE *r, WT_INSERT *ins, WT_
   WT_UPDATE *onpage_upd, WT_UPDATE *tombstone, bool supd_restore, size_t upd_memsize)
 {
     WT_SAVE_UPD *supd;
-    WT_UPDATE *upd;             /* XXX TEMPORARY */
-    int idx;                    /* XXX TEMPORARY */
 
     WT_ASSERT_ALWAYS(session, onpage_upd != NULL || supd_restore,
       "If nothing is committed, the update chain must be restored");
@@ -30,10 +28,6 @@ __rec_update_save(WT_SESSION_IMPL *session, WT_RECONCILE *r, WT_INSERT *ins, WT_
     WT_ASSERT(session, rip != NULL || ins != NULL);
 
     WT_RET(__wt_realloc_def(session, &r->supd_allocated, r->supd_next + 1, &r->supd));
-    __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s:Save for disk: [%" PRIu32 "] ins %p, rip %p, onpage_tombstone %p, supd_restore %s", __func__, r->supd_next, ins, rip, tombstone, supd_restore ? "True" : "False");
-    for (upd = onpage_upd, idx = 0; upd != NULL; upd = upd->next) {
-        __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s:[%" PRIu32 "] onpage_upd[%d] %p", __func__, r->supd_next, idx, upd);
-    }
     supd = &r->supd[r->supd_next];
     supd->ins = ins;
     supd->rip = rip;

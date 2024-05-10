@@ -325,7 +325,6 @@ __wt_rec_col_int(WT_SESSION_IMPL *session, WT_RECONCILE *r, WT_REF *pageref)
     WT_INTL_FOREACH_END;
 
     /* Write the remnant page. */
-    __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s: Write remnant page", __func__);
     return (__wt_rec_split_finish(session, r));
 
 err:
@@ -991,7 +990,6 @@ __wt_rec_col_fix(
     __bit_clear_end(WT_PAGE_HEADER_BYTE(btree, r->cur_ptr->image.mem), r->entries, btree->bitcnt);
 
     /* Write the remnant page. */
-    __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s: Write remnant page", __func__);
     WT_ERR(__wt_rec_split_finish(session, r));
 
 err:
@@ -1106,28 +1104,6 @@ __wt_rec_col_fix_write_auxheader(WT_SESSION_IMPL *session, uint32_t entries,
         memset(p, 0, space);
 }
 
-static const char * page_type_str(uint8_t page_type) {
-    switch (page_type) {
-    case WT_PAGE_INVALID:       /* Invalid page */
-        return "Invalid";
-    case WT_PAGE_BLOCK_MANAGER: /* Block-manager page */
-        return "Block_Manager";
-    case WT_PAGE_COL_FIX:       /* Col-store fixed-len leaf */
-        return "Col_Fix";
-    case WT_PAGE_COL_INT:       /* Col-store internal page */
-        return "Col_Int";
-    case WT_PAGE_COL_VAR:       /* Col-store var-length leaf page */
-        return "Col_Var";
-    case WT_PAGE_OVFL:          /* Overflow page */
-        return "Ovfl";
-    case WT_PAGE_ROW_INT:       /* Row-store internal page */
-        return "Row_Int";
-    case WT_PAGE_ROW_LEAF:      /* Row-store leaf page */
-        return "Row_Leaf";
-    }
-    return "Unknown";
-}
-
 /*
  * __rec_col_var_helper --
  *     Create a column-store variable length record cell and write it onto a page.
@@ -1197,7 +1173,6 @@ __rec_col_var_helper(WT_SESSION_IMPL *session, WT_RECONCILE *r, WT_SALVAGE_COOKI
     /* Copy the value onto the page. */
     if (!deleted && ovfl_usedp == NULL && btree->dictionary)
         WT_RET(__wt_rec_dict_replace(session, r, tw, rle, val));
-    __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s:Copy item to %s page, recno %" PRIu64, __func__, page_type_str(r->page->type), r->recno);
     __wt_rec_image_copy(session, r, val);
     WT_TIME_AGGREGATE_UPDATE(session, &r->cur_ptr->ta, tw);
 
@@ -1701,7 +1676,6 @@ next:
     }
 
     /* Write the remnant page. */
-    __wt_verbose_notice(session, WT_VERB_TEMPORARY, "XXX:%s: Write remnant page", __func__);
     WT_ERR(__wt_rec_split_finish(session, r));
 
 err:
