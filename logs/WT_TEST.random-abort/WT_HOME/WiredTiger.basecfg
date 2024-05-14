@@ -1,0 +1,12 @@
+# Do not modify this file.
+#
+# WiredTiger created this file when the database was created,
+# to store persistent database settings.  Instead of changing
+# these settings, set a WIREDTIGER_CONFIG environment variable
+# or create a WiredTiger.config file to override them.
+
+log=(enabled=,file_max=10M)
+statistics=(all)
+statistics_log=(json=,on_close=,wait=1)
+transaction_sync=(enabled=,method=none)
+version=(major=11,minor=3)

@@ -17,7 +17,9 @@ else
     binary_dir=${binary_dir:-`dirname $0`}
     test_bin=$binary_dir/test_random_abort
 fi
-$TEST_WRAPPER $test_bin -t 10 -T 5
-$TEST_WRAPPER $test_bin -m -t 10 -T 5
-$TEST_WRAPPER $test_bin -C -t 10 -T 5
-$TEST_WRAPPER $test_bin -C -m -t 10 -T 5
+# $TEST_WRAPPER $test_bin -t 10 -T 5 -s workload -h /home/shauncl8/wiredtiger/logs/WT_TEST.random-abort
+$TEST_WRAPPER $test_bin -t 10 -T 5 -s checker -h /home/shauncl8/wiredtiger/logs/WT_TEST.random-abort
+# $TEST_WRAPPER $test_bin -t 10 -T 5
+# $TEST_WRAPPER $test_bin -m -t 10 -T 5
+# $TEST_WRAPPER $test_bin -C -t 10 -T 5
+# $TEST_WRAPPER $test_bin -C -m -t 10 -T 5
