@@ -110,8 +110,15 @@ typedef struct {
     WT_CONNECTION *conn;
     uint64_t start;
     uint32_t id;
+    uint64_t num_ops;
 } WT_THREAD_DATA;
 
+// log file to save logs from different threads
+FILE *global_log_file;
+uint64_t global_op_id = 0;
+
+pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t global_op_mutex = PTHREAD_MUTEX_INITIALIZER;
 /*
  * thread_run --
  *     TODO: Add a comment describing this function.
@@ -119,7 +126,6 @@ typedef struct {
 static WT_THREAD_RET
 thread_run(void *arg)
 {
-    FILE *fp[MAX_RECORD_FILES];
     WT_CURSOR *cursor;
     WT_DECL_RET;
     WT_ITEM data, newv;
@@ -129,16 +135,16 @@ thread_run(void *arg)
     WT_THREAD_DATA *td;
     size_t lsize;
     size_t maxdiff, new_buf_size;
-    uint64_t i;
+    uint64_t i, thread_op_id = 0;
     int nentries;
-    char buf[MAX_VAL], fname[MAX_RECORD_FILES][64], new_buf[MAX_VAL];
+    char buf[MAX_VAL], new_buf[MAX_VAL];
     char kname[64], lgbuf[8];
     char large[128 * 1024];
     bool columnar_table;
+    uint64_t local_global_op_id;
 
+    // initialize variables and clear the buffers
     __wt_random_init(&rnd);
-    for (i = 0; i < MAX_RECORD_FILES; i++)
-        memset(fname[i], 0, sizeof(fname[i]));
     memset(buf, 0, sizeof(buf));
     memset(new_buf, 0, sizeof(new_buf));
     memset(kname, 0, sizeof(kname));
@@ -149,13 +155,6 @@ thread_run(void *arg)
 
     td = (WT_THREAD_DATA *)arg;
 
-    testutil_snprintf(fname[DELETE_RECORD_FILE_ID], sizeof(fname[DELETE_RECORD_FILE_ID]),
-      DELETE_RECORDS_FILE, td->id);
-    testutil_snprintf(fname[INSERT_RECORD_FILE_ID], sizeof(fname[INSERT_RECORD_FILE_ID]),
-      INSERT_RECORDS_FILE, td->id);
-    testutil_snprintf(fname[MODIFY_RECORD_FILE_ID], sizeof(fname[MODIFY_RECORD_FILE_ID]),
-      MODIFY_RECORDS_FILE, td->id);
-
     /*
      * Set up a large value putting our id in it. Write it in there a bunch of times, but the rest
      * of the buffer can just be zero.
@@ -163,19 +162,6 @@ thread_run(void *arg)
     testutil_snprintf(lgbuf, sizeof(lgbuf), "th-%" PRIu32, td->id);
     for (i = 0; i < 128; i += strlen(lgbuf))
         testutil_snprintf(&large[i], lsize - i, "%s", lgbuf);
-    /*
-     * Keep a separate file with the records we wrote for checking.
-     */
-    for (i = 0; i < MAX_RECORD_FILES; i++) {
-        (void)unlink(fname[i]);
-        if ((fp[i] = fopen(fname[i], "w")) == NULL)
-            testutil_die(errno, "fopen");
-        /*
-         * Set to line buffering. But that is advisory only. We've seen cases where the result files
-         * end up with partial lines.
-         */
-        __wt_stream_set_line_buffer(fp[i]);
-    }
 
     testutil_check(td->conn->open_session(td->conn, NULL, NULL, &session));
 
@@ -192,7 +178,16 @@ thread_run(void *arg)
      * Write our portion of the key space until we're killed.
      */
     printf("Thread %" PRIu32 " starts at %" PRIu64 "\n", td->id, td->start);
-    for (i = td->start;; ++i) {
+    for (i = td->start; td->num_ops != 0 ? i < td->start + td->num_ops : 1 ; ++i) {
+        thread_op_id ++;
+
+        pthread_mutex_lock(&global_op_mutex);
+        local_global_op_id = global_op_id++;
+        pthread_mutex_unlock(&global_op_mutex);
+
+        if (i % 1000 == 0) {
+            printf("checkpoint %lu\n", i);
+        }
         /* Record number 0 is invalid for columnar store, check it. */
         if (i == 0)
             i++;
@@ -227,8 +222,11 @@ thread_run(void *arg)
         /*
          * Save the key separately for checking later.
          */
-        if (fprintf(fp[INSERT_RECORD_FILE_ID], "%" PRIu64 "\n", i) == -1)
+        pthread_mutex_lock(&log_mutex);
+        if (fprintf(global_log_file, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", INSERT, %" PRIu64 ", %s)\n",
+                    local_global_op_id, td->id, thread_op_id, i, buf) < 0)
             testutil_die(errno, "fprintf");
+        pthread_mutex_unlock(&log_mutex);
 
         /*
          * If configured, run compaction on database after each epoch of 100000 operations.
@@ -260,8 +258,12 @@ thread_run(void *arg)
             testutil_assert(ret == 0);
 
             /* Save the key separately for checking later.*/
-            if (fprintf(fp[DELETE_RECORD_FILE_ID], "%" PRIu64 "\n", i) == -1)
+            pthread_mutex_lock(&log_mutex);
+            if (fprintf(global_log_file, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", DELETE, %" PRIu64 ")\n",
+                        local_global_op_id, td->id, thread_op_id, i) < 0)
                 testutil_die(errno, "fprintf");
+            pthread_mutex_unlock(&log_mutex);
+
         } else if (i % MAX_NUM_OPS == OP_TYPE_MODIFY) {
             testutil_snprintf(new_buf, sizeof(new_buf), "modify-%" PRIu64, i);
             new_buf_size = (data.size < MAX_VAL - 1 ? data.size : MAX_VAL - 1);
@@ -301,16 +303,27 @@ thread_run(void *arg)
             /*
              * Save the key and new value separately for checking later.
              */
-            if (fprintf(fp[MODIFY_RECORD_FILE_ID], "%s %" PRIu64 "\n", new_buf, i) == -1)
+            pthread_mutex_lock(&log_mutex);
+            if (fprintf(global_log_file, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", MODIFY, %" PRIu64 ", %s)\n",
+                        local_global_op_id, td->id, thread_op_id, i, new_buf) < 0)
                 testutil_die(errno, "fprintf");
+            pthread_mutex_unlock(&log_mutex);
         } else if (i % MAX_NUM_OPS != OP_TYPE_INSERT)
             /* Dead code. To catch any op type misses */
             testutil_die(0, "Unsupported operation type.");
     }
+    // KILL IF USING NUM_OPS
+    if (td->num_ops != 0) {
+        printf("Thread %u killed\n", td->id);
+        pthread_exit(NULL);
+    }
     /* NOTREACHED */
+    return NULL;
 }
 
-static void fill_db(uint32_t) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
+
+// TROUBLE. NEED TO FIX.
+// static void fill_db(uint32_t, uint64_t) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
 
 /*
  * fill_db --
@@ -318,7 +331,7 @@ static void fill_db(uint32_t) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
  *     until it is killed by the parent.
  */
 static void
-fill_db(uint32_t nth)
+fill_db(uint32_t nth, uint64_t num_ops)
 {
     WT_CONNECTION *conn;
     WT_SESSION *session;
@@ -349,23 +362,29 @@ fill_db(uint32_t nth)
     printf("Create %" PRIu32 " writer threads\n", nth);
     for (i = 0; i < nth; ++i) {
         td[i].conn = conn;
-        td[i].start = WT_BILLION * (uint64_t)i;
+        num_ops != 0 ? td[i].start = num_ops * (uint64_t)i : WT_BILLION * (uint64_t)i;
+        // td[i].start = WT_BILLION * (uint64_t)i; // change to num_ops
         td[i].id = i;
+        td[i].num_ops = num_ops;
         testutil_check(__wt_thread_create(NULL, &thr[i], thread_run, &td[i]));
     }
     printf("Spawned %" PRIu32 " writer threads\n", nth);
     fflush(stdout);
+
     /*
-     * The threads never exit, so the child will just wait here until it is killed.
-     */
-    for (i = 0; i < nth; ++i)
+    * The threads never exit, so the child will just wait here until it is killed.
+    */
+    for (i = 0; i < nth; ++i) {
+        printf("Waiting for thread %u\n", i);
         testutil_check(__wt_thread_join(NULL, &thr[i]));
-    /*
-     * NOTREACHED
-     */
+        printf("Joined thread %u\n", i);
+    }
+    printf("Ops: All threads complete!");
     free(thr);
     free(td);
-    _exit(EXIT_SUCCESS);
+    if (num_ops == 0) {
+        _exit(EXIT_SUCCESS);
+    }
 }
 
 extern int __wt_optind;
@@ -396,7 +415,7 @@ handler(int sig)
  *     TODO: Add a comment describing this function.
  */
 static int
-recover_and_verify(uint32_t nthreads)
+recover_and_verify(uint32_t nthreads, char* home_dir)
 {
     FILE *fp[MAX_RECORD_FILES];
     WT_CONNECTION *conn;
@@ -411,7 +430,9 @@ recover_and_verify(uint32_t nthreads)
     bool columnar_table, fatal;
 
     printf("Open database, run recovery and verify content\n");
-    testutil_check(wiredtiger_open(WT_HOME_DIR, NULL, TESTUTIL_ENV_CONFIG_REC, &conn));
+    printf("What is WT_HOME? %s\n", home_dir);
+    // testutil_check(wiredtiger_open(WT_HOME_DIR, NULL, TESTUTIL_ENV_CONFIG_REC, &conn));
+    testutil_check(wiredtiger_open(home_dir, NULL, TESTUTIL_ENV_CONFIG_REC, &conn));
     testutil_check(conn->open_session(conn, NULL, NULL, &session));
     testutil_check(session->open_cursor(session, col_uri, NULL, NULL, &col_cursor));
     testutil_check(session->open_cursor(session, uri, NULL, NULL, &row_cursor));
@@ -649,11 +670,14 @@ main(int argc, char *argv[])
     WT_RAND_STATE rnd;
     pid_t pid;
     uint32_t i, j, nth, timeout;
+    uint64_t num_ops;
     int ch, ret, status;
     char buf[PATH_MAX], fname[MAX_RECORD_FILES][64];
     char cwd_start[PATH_MAX]; /* The working directory when we started */
     const char *working_dir;
-    bool preserve, rand_th, rand_time, verify_only;
+    const char *squint_mode;
+    bool preserve, rand_th, rand_time, verify_only, squint;
+    char cwd[1024]; // DELETE
 
     (void)testutil_set_progname(argv);
 
@@ -664,9 +688,11 @@ main(int argc, char *argv[])
     rand_th = rand_time = true;
     timeout = MIN_TIME;
     verify_only = false;
+    squint = false;
+    num_ops = 0;
     working_dir = use_lazyfs ? "WT_TEST.random-abort-lazyfs" : "WT_TEST.random-abort";
 
-    while ((ch = __wt_getopt(progname, argc, argv, "Cch:lmpT:t:v")) != EOF)
+    while ((ch = __wt_getopt(progname, argc, argv, "Cch:lmpT:t:vs:o:")) != EOF)
         switch (ch) {
         case 'C':
             compat = true;
@@ -696,6 +722,27 @@ main(int argc, char *argv[])
             break;
         case 'v':
             verify_only = true;
+            break;
+        case 's':
+            squint_mode = __wt_optarg;
+            printf("Squint Mode: %s\n", squint_mode);
+            if (strcmp(squint_mode, "workload") == 0) {
+                squint = true;
+                preserve = true;
+            }
+            if (strcmp(squint_mode, "checker") == 0) {
+                squint = true;
+                preserve = true;
+                verify_only = true;
+            }
+            break;
+        case 'o':
+            /* The number of operations per thread. Takes precedence over -t. */
+            if (__wt_optarg != 0) {
+                rand_time = false;
+                num_ops = (uint64_t)atoi(__wt_optarg);
+                printf("Timeout disabled, executing a finite number of operations.\n");
+            }
             break;
         default:
             usage();
@@ -728,6 +775,7 @@ main(int argc, char *argv[])
         testutil_mkdir(buf);
         testutil_snprintf(buf, sizeof(buf), "%s/%s", home, WT_HOME_DIR);
         testutil_mkdir(buf);
+        printf("Set up test home directory and subdirectories!\n");
 
         /* Set up LazyFS. */
         if (use_lazyfs)
@@ -760,49 +808,51 @@ main(int argc, char *argv[])
         sa.sa_handler = handler;
         testutil_assert_errno(sigaction(SIGCHLD, &sa, NULL) == 0);
         testutil_assert_errno((pid = fork()) >= 0);
-
+        
         if (pid == 0) { /* child */
-            fill_db(nth);
+            fill_db(nth, num_ops);
             /* NOTREACHED */
-        }
-
-        /* parent */
-        /*
-         * Sleep for the configured amount of time before killing the child. Start the timeout from
-         * the time we notice that the child workers have created their record files. That allows
-         * the test to run correctly on really slow machines.
-         */
-        i = 0;
-        while (i < nth) {
-            for (j = 0; j < MAX_RECORD_FILES; j++) {
-                /*
-                 * Wait for each record file to exist.
-                 */
-                if (j == DELETE_RECORD_FILE_ID)
-                    testutil_snprintf(fname[j], sizeof(fname[j]), DELETE_RECORDS_FILE, i);
-                else if (j == INSERT_RECORD_FILE_ID)
-                    testutil_snprintf(fname[j], sizeof(fname[j]), INSERT_RECORDS_FILE, i);
-                else
-                    testutil_snprintf(fname[j], sizeof(fname[j]), MODIFY_RECORDS_FILE, i);
-                testutil_snprintf(buf, sizeof(buf), "%s/%s", home, fname[j]);
-                while (stat(buf, &sb) != 0)
-                    testutil_sleep_wait(1, pid);
+            printf("NOT REACHED?\n");
+        } else if (pid > 0 && num_ops != 0) {
+            for (i = 0; i < nth; ++i) {
+                waitpid(pid, &status, 0);
             }
-            ++i;
-        }
-        sleep(timeout);
-        sa.sa_handler = SIG_DFL;
-        testutil_assert_errno(sigaction(SIGCHLD, &sa, NULL) == 0);
+            printf("Passed\n");
+        } else {
+            /* parent */
+            /*
+            * Sleep for the configured amount of time before killing the child. Start the timeout from
+            * the time we notice that the child workers have created their record files. That allows
+            * the test to run correctly on really slow machines.
+            */
+            i = 0;
+            while (i < nth) {
+                for (j = 0; j < MAX_RECORD_FILES; j++) {
+                    /*
+                    * Wait for each record file to exist.
+                    */
+                    if (j == DELETE_RECORD_FILE_ID)
+                        testutil_snprintf(fname[j], sizeof(fname[j]), DELETE_RECORDS_FILE, i);
+                    else if (j == INSERT_RECORD_FILE_ID)
+                        testutil_snprintf(fname[j], sizeof(fname[j]), INSERT_RECORDS_FILE, i);
+                    else
+                        testutil_snprintf(fname[j], sizeof(fname[j]), MODIFY_RECORDS_FILE, i);
+                    testutil_snprintf(buf, sizeof(buf), "%s/%s", home, fname[j]);
+                    while (stat(buf, &sb) != 0)
+                        testutil_sleep_wait(1, pid);
+                }
+                ++i;
+            }
 
-        /*
-         * !!! It should be plenty long enough to make sure more than
-         * one log file exists.  If wanted, that check would be added
-         * here.
-         */
-        printf("Kill child\n");
-        testutil_assert_errno(kill(pid, SIGKILL) == 0);
-        testutil_assert_errno(waitpid(pid, &status, 0) != -1);
+            sleep(timeout);
+            sa.sa_handler = SIG_DFL;
+            testutil_assert_errno(sigaction(SIGCHLD, &sa, NULL) == 0);
+            testutil_assert_errno(kill(pid, SIGKILL) == 0);
+            testutil_assert_errno(waitpid(pid, &status, 0) != -1);
+        }
+       
     }
+    printf("Filled database!\n");
 
     /*
      * !!! If we wanted to take a copy of the directory before recovery,
@@ -812,7 +862,9 @@ main(int argc, char *argv[])
         testutil_die(errno, "parent chdir: %s", home);
 
     /* Copy the data to a separate folder for debugging purpose. */
-    testutil_copy_data(home);
+    if (!squint) {
+        testutil_copy_data(home);
+    }
 
     /*
      * Clear the cache, if we are using LazyFS. Do this after we save the data for debugging
@@ -825,7 +877,13 @@ main(int argc, char *argv[])
     /*
      * Recover the database and verify whether all the records from all threads are present or not?
      */
-    ret = recover_and_verify(nth);
+    if (squint && verify_only) {
+        // testutil_snprintf(buf, sizeof(buf), "%s/%s", home, RECORDS_DIR);
+        testutil_snprintf(buf, sizeof(buf), "%s/%s", home, WT_HOME_DIR);
+        ret = recover_and_verify(nth, buf);
+    } else {
+        ret = EXIT_SUCCESS;
+    }
 
     /*
      * Clean up.
@@ -846,6 +904,18 @@ main(int argc, char *argv[])
     /* Delete the work directory. */
     if (ret == EXIT_SUCCESS && !preserve)
         testutil_remove(home);
+    
 
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        printf("Current working directory: %s\n", cwd);
+    } else {
+        perror("getcwd() error");
+    }
+
+    printf("Done!\n");
+
+    // close the file and clean the mutex
+    fclose(global_log_file);
+    pthread_mutex_destroy(&log_mutex);
     return (ret);
 }
