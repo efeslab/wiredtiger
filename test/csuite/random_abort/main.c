@@ -55,14 +55,14 @@ static WT_LAZY_FS lazyfs;
 #define OP_TYPE_MODIFY 2
 #define MAX_NUM_OPS 3
 
-#define DELETE_RECORDS_FILE RECORDS_DIR DIR_DELIM_STR "delete-records-%" PRIu32
-#define INSERT_RECORDS_FILE RECORDS_DIR DIR_DELIM_STR "insert-records-%" PRIu32
-#define MODIFY_RECORDS_FILE RECORDS_DIR DIR_DELIM_STR "modify-records-%" PRIu32
+// #define DELETE_RECORDS_FILE RECORDS_DIR DIR_DELIM_STR "delete-records-%" PRIu32
+// #define INSERT_RECORDS_FILE RECORDS_DIR DIR_DELIM_STR "insert-records-%" PRIu32
+// #define MODIFY_RECORDS_FILE RECORDS_DIR DIR_DELIM_STR "modify-records-%" PRIu32
 
-#define DELETE_RECORD_FILE_ID 0
-#define INSERT_RECORD_FILE_ID 1
-#define MODIFY_RECORD_FILE_ID 2
-#define MAX_RECORD_FILES 3
+// #define DELETE_RECORD_FILE_ID 0
+// #define INSERT_RECORD_FILE_ID 1
+// #define MODIFY_RECORD_FILE_ID 2
+// #define MAX_RECORD_FILES 3
 
 #define ENV_CONFIG_DEF \
     "create,log=(file_max=10M,enabled),statistics=(all),statistics_log=(json,on_close,wait=1)"
@@ -182,7 +182,8 @@ thread_run(void *arg)
         thread_op_id ++;
 
         pthread_mutex_lock(&global_op_mutex);
-        local_global_op_id = global_op_id++;
+        global_op_id++;
+        local_global_op_id = global_op_id;
         pthread_mutex_unlock(&global_op_mutex);
 
         if (i % 1000 == 0) {
@@ -248,6 +249,13 @@ thread_run(void *arg)
          * Decide what kind of operation can be performed on the already inserted data.
          */
         if (i % MAX_NUM_OPS == OP_TYPE_DELETE) {
+            thread_op_id ++;
+
+            pthread_mutex_lock(&global_op_mutex);
+            global_op_id++;
+            local_global_op_id = global_op_id;
+            pthread_mutex_unlock(&global_op_mutex);
+
             if (columnar_table)
                 cursor->set_key(cursor, i);
             else
@@ -265,6 +273,13 @@ thread_run(void *arg)
             pthread_mutex_unlock(&log_mutex);
 
         } else if (i % MAX_NUM_OPS == OP_TYPE_MODIFY) {
+            thread_op_id ++;
+
+            pthread_mutex_lock(&global_op_mutex);
+            global_op_id++;
+            local_global_op_id = global_op_id;
+            pthread_mutex_unlock(&global_op_mutex);
+
             testutil_snprintf(new_buf, sizeof(new_buf), "modify-%" PRIu64, i);
             new_buf_size = (data.size < MAX_VAL - 1 ? data.size : MAX_VAL - 1);
 
@@ -417,16 +432,17 @@ handler(int sig)
 static int
 recover_and_verify(uint32_t nthreads, char* home_dir)
 {
-    FILE *fp[MAX_RECORD_FILES];
+    // FILE *fp[MAX_RECORD_FILES];
     WT_CONNECTION *conn;
     WT_CURSOR *col_cursor, *cursor, *row_cursor;
     WT_DECL_RET;
     WT_ITEM search_value;
     WT_SESSION *session;
     uint64_t absent, count, key, last_key, middle;
-    uint32_t i, j;
+    uint32_t i;
     char file_value[MAX_VAL];
-    char fname[MAX_RECORD_FILES][64], kname[64];
+    // char fname[MAX_RECORD_FILES][64];
+    char kname[64];
     bool columnar_table, fatal;
 
     printf("Open database, run recovery and verify content\n");
@@ -454,18 +470,22 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
         }
 
         middle = 0;
-        testutil_snprintf(fname[DELETE_RECORD_FILE_ID], sizeof(fname[DELETE_RECORD_FILE_ID]),
-          DELETE_RECORDS_FILE, i);
-        if ((fp[DELETE_RECORD_FILE_ID] = fopen(fname[DELETE_RECORD_FILE_ID], "r")) == NULL)
-            testutil_die(errno, "fopen: %s", fname[DELETE_RECORD_FILE_ID]);
-        testutil_snprintf(fname[INSERT_RECORD_FILE_ID], sizeof(fname[INSERT_RECORD_FILE_ID]),
-          INSERT_RECORDS_FILE, i);
-        if ((fp[INSERT_RECORD_FILE_ID] = fopen(fname[INSERT_RECORD_FILE_ID], "r")) == NULL)
-            testutil_die(errno, "fopen: %s", fname[INSERT_RECORD_FILE_ID]);
-        testutil_snprintf(fname[MODIFY_RECORD_FILE_ID], sizeof(fname[MODIFY_RECORD_FILE_ID]),
-          MODIFY_RECORDS_FILE, i);
-        if ((fp[MODIFY_RECORD_FILE_ID] = fopen(fname[MODIFY_RECORD_FILE_ID], "r")) == NULL)
-            testutil_die(errno, "fopen: %s", fname[MODIFY_RECORD_FILE_ID]);
+        // testutil_snprintf(fname[DELETE_RECORD_FILE_ID], sizeof(fname[DELETE_RECORD_FILE_ID]),
+        //   DELETE_RECORDS_FILE, i);
+        // if ((fp[DELETE_RECORD_FILE_ID] = fopen(fname[DELETE_RECORD_FILE_ID], "r")) == NULL)
+        //     testutil_die(errno, "fopen: %s", fname[DELETE_RECORD_FILE_ID]);
+        // testutil_snprintf(fname[INSERT_RECORD_FILE_ID], sizeof(fname[INSERT_RECORD_FILE_ID]),
+        //   INSERT_RECORDS_FILE, i);
+        // if ((fp[INSERT_RECORD_FILE_ID] = fopen(fname[INSERT_RECORD_FILE_ID], "r")) == NULL)
+        //     testutil_die(errno, "fopen: %s", fname[INSERT_RECORD_FILE_ID]);
+        // testutil_snprintf(fname[MODIFY_RECORD_FILE_ID], sizeof(fname[MODIFY_RECORD_FILE_ID]),
+        //   MODIFY_RECORDS_FILE, i);
+        // if ((fp[MODIFY_RECORD_FILE_ID] = fopen(fname[MODIFY_RECORD_FILE_ID], "r")) == NULL)
+        //     testutil_die(errno, "fopen: %s", fname[MODIFY_RECORD_FILE_ID]);
+
+        if ((global_log_file = fopen("global_log_file.txt", "r")) == NULL) {
+            testutil_die(errno, "fopen: global_log_file.txt");
+        }
 
         /*
          * For every key in the saved file, verify that the key exists in the table after recovery.
@@ -474,7 +494,7 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
          * have been recovered.
          */
         for (last_key = UINT64_MAX;; ++count, last_key = key) {
-            ret = fscanf(fp[INSERT_RECORD_FILE_ID], "%" SCNu64 "\n", &key);
+            ret = fscanf(global_log_file, "%" SCNu64 "\n", &key);
             /*
              * Consider anything other than clear success in getting the key to be EOF. We've seen
              * file system issues where the file ends with zeroes on a 4K boundary and does not
@@ -487,8 +507,8 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
              * result in a false negative error for a missing record. Detect it.
              */
             if (last_key != UINT64_MAX && key != last_key + 1) {
-                printf("%s: Ignore partial record %" PRIu64 " last valid key %" PRIu64 "\n",
-                  fname[INSERT_RECORD_FILE_ID], key, last_key);
+                printf("Global log file: Ignore partial record %" PRIu64 " last valid key %" PRIu64 "\n",
+                  key, last_key);
                 break;
             }
 
@@ -496,7 +516,7 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
                 /*
                  * If it is delete operation, make sure the record doesn't exist.
                  */
-                ret = fscanf(fp[DELETE_RECORD_FILE_ID], "%" SCNu64 "\n", &key);
+                ret = fscanf(global_log_file, "%" SCNu64 "\n", &key);
 
                 /*
                  * Consider anything other than clear success in getting the key to be EOF. We've
@@ -511,8 +531,8 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
                  * can result in a false negative error for a missing record. Detect it.
                  */
                 if (last_key != UINT64_MAX && key <= last_key) {
-                    printf("%s: Ignore partial record %" PRIu64 " last valid key %" PRIu64 "\n",
-                      fname[DELETE_RECORD_FILE_ID], key, last_key);
+                    printf("Global log file: Ignore partial record %" PRIu64 " last valid key %" PRIu64 "\n",
+                    key, last_key);
                     break;
                 }
 
@@ -532,13 +552,13 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
                      * We should never find an existing key after we have detected one missing for
                      * the thread.
                      */
-                    printf("%s: after missing record at %" PRIu64 " key %" PRIu64 " exists\n",
-                      fname[DELETE_RECORD_FILE_ID], middle, key);
+                    printf("Global log file: after missing record at %" PRIu64 " key %" PRIu64 " exists\n",
+                        middle, key);
                     fatal = true;
                 } else {
                     if (!inmem)
-                        printf("%s: deleted record found with key %" PRIu64 "\n",
-                          fname[DELETE_RECORD_FILE_ID], key);
+                        printf("Global log file: deleted record found with key %" PRIu64 "\n",
+                          key);
                     absent++;
                     middle = key;
                 }
@@ -558,8 +578,8 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
                 if (ret != 0) {
                     testutil_assert(ret == WT_NOTFOUND);
                     if (!inmem)
-                        printf("%s: no insert record with key %" PRIu64 "\n",
-                          fname[INSERT_RECORD_FILE_ID], key);
+                        printf("Global log file: no insert record with key %" PRIu64 "\n",
+                          key);
                     absent++;
                     middle = key;
                 } else if (middle != 0) {
@@ -567,8 +587,8 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
                      * We should never find an existing key after we have detected one missing for
                      * the thread.
                      */
-                    printf("%s: after missing record at %" PRIu64 " key %" PRIu64 " exists\n",
-                      fname[INSERT_RECORD_FILE_ID], middle, key);
+                    printf("Global log file: after missing record at %" PRIu64 " key %" PRIu64 " exists\n",
+                      middle, key);
                     fatal = true;
                 }
             } else if (key % MAX_NUM_OPS == OP_TYPE_MODIFY) {
@@ -577,7 +597,7 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
                  * saved.
                  */
                 ret = fscanf(
-                  fp[MODIFY_RECORD_FILE_ID], "%" STR_MAX_VAL "s %" SCNu64 "\n", file_value, &key);
+                  global_log_file, "%" STR_MAX_VAL "s %" SCNu64 "\n", file_value, &key);
 
                 /*
                  * Consider anything other than clear success in getting the key to be EOF. We've
@@ -593,8 +613,8 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
                  * key.
                  */
                 if (last_key != UINT64_MAX && key <= last_key) {
-                    printf("%s: Ignore partial record %" PRIu64 " last valid key %" PRIu64 "\n",
-                      fname[MODIFY_RECORD_FILE_ID], key, last_key);
+                    printf("Global log file: Ignore partial record %" PRIu64 " last valid key %" PRIu64 "\n",
+                    key, last_key);
                     break;
                 }
 
@@ -610,8 +630,8 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
                 if (ret != 0) {
                     testutil_assert(ret == WT_NOTFOUND);
                     if (!inmem)
-                        printf("%s: no modified record with key %" PRIu64 "\n",
-                          fname[MODIFY_RECORD_FILE_ID], key);
+                        printf("Global log file: no modified record with key %" PRIu64 "\n",
+                            key);
                     absent++;
                     middle = key;
                 } else if (middle != 0) {
@@ -619,8 +639,8 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
                      * We should never find an existing key after we have detected one missing for
                      * the thread.
                      */
-                    printf("%s: after missing record at %" PRIu64 " key %" PRIu64 " exists\n",
-                      fname[MODIFY_RECORD_FILE_ID], middle, key);
+                    printf("Global log file: after missing record at %" PRIu64 " key %" PRIu64 " exists\n",
+                        middle, key);
                     fatal = true;
                 } else {
                     testutil_check(cursor->get_value(cursor, &search_value));
@@ -632,8 +652,8 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
                          * Once the key exist in the database, there is no way that fetched data can
                          * mismatch with saved.
                          */
-                        printf("%s: modified record with data mismatch key %" PRIu64 "\n",
-                          fname[MODIFY_RECORD_FILE_ID], key);
+                        printf("Global log file: modified record with data mismatch key %" PRIu64 "\n",
+                         key);
 
                     absent++;
                     middle = key;
@@ -642,10 +662,12 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
                 /* Dead code. To catch any op type misses */
                 testutil_die(0, "Unsupported operation type.");
         }
-        for (j = 0; j < MAX_RECORD_FILES; j++) {
-            if (fclose(fp[j]) != 0)
-                testutil_die(errno, "fclose");
-        }
+        // for (j = 0; j < MAX_RECORD_FILES; j++) {
+        //     if (fclose(global_log_file) != 0)
+        //         testutil_die(errno, "fclose");
+        // }
+        if (fclose(global_log_file) != 0) {testutil_die(errno, "fclose");}
+                
     }
     testutil_check(conn->close(conn, NULL));
     if (fatal)
@@ -666,13 +688,14 @@ int
 main(int argc, char *argv[])
 {
     struct sigaction sa;
-    struct stat sb;
+    // struct stat sb;
     WT_RAND_STATE rnd;
     pid_t pid;
-    uint32_t i, j, nth, timeout;
+    uint32_t i, nth, timeout;
     uint64_t num_ops;
     int ch, ret, status;
-    char buf[PATH_MAX], fname[MAX_RECORD_FILES][64];
+    char buf[PATH_MAX];
+    // char fname[MAX_RECORD_FILES][64];
     char cwd_start[PATH_MAX]; /* The working directory when we started */
     const char *working_dir;
     const char *squint_mode;
@@ -751,6 +774,10 @@ main(int argc, char *argv[])
     if (argc != 0)
         usage();
 
+    global_log_file = fopen("global_log_file.txt", "w");
+    if (global_log_file == NULL) {
+        testutil_die(errno, "fopen: global_log_file.txt");
+    }
     testutil_work_dir_from_path(home, sizeof(home), working_dir);
 
     /*
@@ -826,23 +853,23 @@ main(int argc, char *argv[])
             * the test to run correctly on really slow machines.
             */
             i = 0;
-            while (i < nth) {
-                for (j = 0; j < MAX_RECORD_FILES; j++) {
-                    /*
-                    * Wait for each record file to exist.
-                    */
-                    if (j == DELETE_RECORD_FILE_ID)
-                        testutil_snprintf(fname[j], sizeof(fname[j]), DELETE_RECORDS_FILE, i);
-                    else if (j == INSERT_RECORD_FILE_ID)
-                        testutil_snprintf(fname[j], sizeof(fname[j]), INSERT_RECORDS_FILE, i);
-                    else
-                        testutil_snprintf(fname[j], sizeof(fname[j]), MODIFY_RECORDS_FILE, i);
-                    testutil_snprintf(buf, sizeof(buf), "%s/%s", home, fname[j]);
-                    while (stat(buf, &sb) != 0)
-                        testutil_sleep_wait(1, pid);
-                }
-                ++i;
-            }
+            // while (i < nth) {
+            //     for (j = 0; j < MAX_RECORD_FILES; j++) {
+            //         /*
+            //         * Wait for each record file to exist.
+            //         */
+            //         if (j == DELETE_RECORD_FILE_ID)
+            //             testutil_snprintf(fname[j], sizeof(fname[j]), DELETE_RECORDS_FILE, i);
+            //         else if (j == INSERT_RECORD_FILE_ID)
+            //             testutil_snprintf(fname[j], sizeof(fname[j]), INSERT_RECORDS_FILE, i);
+            //         else
+            //             testutil_snprintf(fname[j], sizeof(fname[j]), MODIFY_RECORDS_FILE, i);
+            //         testutil_snprintf(buf, sizeof(buf), "%s/%s", home, fname[j]);
+            //         while (stat(buf, &sb) != 0)
+            //             testutil_sleep_wait(1, pid);
+            //     }
+            //     ++i;
+            // }
 
             sleep(timeout);
             sa.sa_handler = SIG_DFL;
