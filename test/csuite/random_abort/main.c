@@ -118,7 +118,7 @@ FILE *global_log_file;
 uint64_t global_op_id = 0;
 
 pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t global_op_mutex = PTHREAD_MUTEX_INITIALIZER;
+// pthread_mutex_t global_op_mutex = PTHREAD_MUTEX_INITIALIZER;
 /*
  * thread_run --
  *     TODO: Add a comment describing this function.
@@ -179,13 +179,6 @@ thread_run(void *arg)
      */
     printf("Thread %" PRIu32 " starts at %" PRIu64 "\n", td->id, td->start);
     for (i = td->start; td->num_ops != 0 ? i < td->start + td->num_ops : 1 ; ++i) {
-        thread_op_id ++;
-
-        pthread_mutex_lock(&global_op_mutex);
-        global_op_id++;
-        local_global_op_id = global_op_id;
-        pthread_mutex_unlock(&global_op_mutex);
-
         if (i % 1000 == 0) {
             printf("checkpoint %lu\n", i);
         }
@@ -224,6 +217,9 @@ thread_run(void *arg)
          * Save the key separately for checking later.
          */
         pthread_mutex_lock(&log_mutex);
+        thread_op_id ++;
+        global_op_id++;
+        local_global_op_id = global_op_id;
         if (fprintf(global_log_file, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", INSERT, %" PRIu64 ", %s)\n",
                     local_global_op_id, td->id, thread_op_id, i, buf) < 0)
             testutil_die(errno, "fprintf");
@@ -249,37 +245,26 @@ thread_run(void *arg)
          * Decide what kind of operation can be performed on the already inserted data.
          */
         if (i % MAX_NUM_OPS == OP_TYPE_DELETE) {
-            thread_op_id ++;
-
-            pthread_mutex_lock(&global_op_mutex);
-            global_op_id++;
-            local_global_op_id = global_op_id;
-            pthread_mutex_unlock(&global_op_mutex);
-
             if (columnar_table)
                 cursor->set_key(cursor, i);
             else
                 cursor->set_key(cursor, kname);
 
-            while ((ret = cursor->remove(cursor)) == WT_ROLLBACK)
-                ;
+            while ((ret = cursor->remove(cursor)) == WT_ROLLBACK);
+            // printf("Thread %u: ret %d \n", td->id, ret);
             testutil_assert(ret == 0);
 
             /* Save the key separately for checking later.*/
             pthread_mutex_lock(&log_mutex);
+            thread_op_id ++;
+            global_op_id++;
+            local_global_op_id = global_op_id;
             if (fprintf(global_log_file, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", DELETE, %" PRIu64 ")\n",
                         local_global_op_id, td->id, thread_op_id, i) < 0)
                 testutil_die(errno, "fprintf");
             pthread_mutex_unlock(&log_mutex);
 
         } else if (i % MAX_NUM_OPS == OP_TYPE_MODIFY) {
-            thread_op_id ++;
-
-            pthread_mutex_lock(&global_op_mutex);
-            global_op_id++;
-            local_global_op_id = global_op_id;
-            pthread_mutex_unlock(&global_op_mutex);
-
             testutil_snprintf(new_buf, sizeof(new_buf), "modify-%" PRIu64, i);
             new_buf_size = (data.size < MAX_VAL - 1 ? data.size : MAX_VAL - 1);
 
@@ -319,6 +304,9 @@ thread_run(void *arg)
              * Save the key and new value separately for checking later.
              */
             pthread_mutex_lock(&log_mutex);
+            thread_op_id ++;
+            global_op_id++;
+            local_global_op_id = global_op_id;
             if (fprintf(global_log_file, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", MODIFY, %" PRIu64 ", %s)\n",
                         local_global_op_id, td->id, thread_op_id, i, new_buf) < 0)
                 testutil_die(errno, "fprintf");
