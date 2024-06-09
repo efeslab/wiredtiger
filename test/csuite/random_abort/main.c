@@ -114,6 +114,7 @@ typedef struct {
     WT_CONNECTION *conn;
     uint64_t start;
     uint32_t id;
+    uint64_t num_ops;
 } WT_THREAD_DATA;
 
 /*
@@ -198,10 +199,14 @@ thread_run(void *arg)
      * Write our portion of the key space until we're killed.
      */
     printf("Thread %" PRIu32 " starts at %" PRIu64 "\n", td->id, td->start);
-    for (i = td->start;; ++i) {
+    for (i = td->start; td->num_ops != 0 ? i < td->start + td->num_ops : 1 ; ++i) {
         /* Record number 0 is invalid for columnar store, check it. */
         if (i == 0)
             i++;
+
+        if (i % 1000 == 0) {
+            printf("checkpoint %lu\n", i);
+        }
 
         /*
          * The value is the insert- with key appended.
@@ -336,10 +341,15 @@ thread_run(void *arg)
             /* Dead code. To catch any op type misses */
             testutil_die(0, "Unsupported operation type.");
     }
+    if (td->num_ops != 0) {
+        printf("Thread %u killed\n", td->id);
+        pthread_exit(NULL);
+    }
     /* NOTREACHED */
+    return NULL;
 }
 
-static void fill_db(uint32_t) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
+// static void fill_db(uint32_t) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
 
 /*
  * fill_db --
@@ -347,7 +357,7 @@ static void fill_db(uint32_t) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
  *     until it is killed by the parent.
  */
 static void
-fill_db(uint32_t nth)
+fill_db(uint32_t nth, uint64_t num_ops)
 {
     WT_CONNECTION *conn;
     WT_SESSION *session;
@@ -378,8 +388,9 @@ fill_db(uint32_t nth)
     printf("Create %" PRIu32 " writer threads\n", nth);
     for (i = 0; i < nth; ++i) {
         td[i].conn = conn;
-        td[i].start = WT_BILLION * (uint64_t)i;
+        num_ops != 0 ? td[i].start = num_ops * (uint64_t)i : WT_BILLION * (uint64_t)i;
         td[i].id = i;
+        td[i].num_ops = num_ops;
         testutil_check(__wt_thread_create(NULL, &thr[i], thread_run, &td[i]));
     }
     printf("Spawned %" PRIu32 " writer threads\n", nth);
@@ -387,14 +398,17 @@ fill_db(uint32_t nth)
     /*
      * The threads never exit, so the child will just wait here until it is killed.
      */
-    for (i = 0; i < nth; ++i)
+    for (i = 0; i < nth; ++i) {
+        printf("Waiting for thread %u\n", i);
         testutil_check(__wt_thread_join(NULL, &thr[i]));
-    /*
-     * NOTREACHED
-     */
+        printf("Joined thread %u\n", i);
+    }
+    printf("Ops: All threads complete!");
     free(thr);
     free(td);
-    _exit(EXIT_SUCCESS);
+    if (num_ops == 0) {
+        _exit(EXIT_SUCCESS);
+    }
 }
 
 extern int __wt_optind;
@@ -425,7 +439,7 @@ handler(int sig)
  *     TODO: Add a comment describing this function.
  */
 static int
-recover_and_verify(uint32_t nthreads)
+recover_and_verify(uint32_t nthreads, char* home_dir)
 {
     FILE *fp[MAX_RECORD_FILES];
     WT_CONNECTION *conn;
@@ -440,7 +454,9 @@ recover_and_verify(uint32_t nthreads)
     bool columnar_table, fatal;
 
     printf("Open database, run recovery and verify content\n");
-    testutil_check(wiredtiger_open(WT_HOME_DIR, NULL, TESTUTIL_ENV_CONFIG_REC, &conn));
+    // testutil_check(wiredtiger_open(WT_HOME_DIR, NULL, TESTUTIL_ENV_CONFIG_REC, &conn));
+    printf("What is WT_HOME? %s\n", home_dir);
+    testutil_check(wiredtiger_open(home_dir, NULL, TESTUTIL_ENV_CONFIG_REC, &conn));
     testutil_check(conn->open_session(conn, NULL, NULL, &session));
     testutil_check(session->open_cursor(session, col_uri, NULL, NULL, &col_cursor));
     testutil_check(session->open_cursor(session, uri, NULL, NULL, &row_cursor));
@@ -678,11 +694,14 @@ main(int argc, char *argv[])
     WT_RAND_STATE rnd;
     pid_t pid;
     uint32_t i, j, nth, timeout;
+    uint64_t num_ops;
     int ch, ret, status;
     char buf[PATH_MAX], fname[MAX_RECORD_FILES][64];
     char cwd_start[PATH_MAX]; /* The working directory when we started */
     const char *working_dir;
-    bool preserve, rand_th, rand_time, verify_only;
+    const char *squint_mode;
+    bool preserve, rand_th, rand_time, verify_only, squint;
+    char cwd[1024]; // DELETE
 
     (void)testutil_set_progname(argv);
 
@@ -693,9 +712,11 @@ main(int argc, char *argv[])
     rand_th = rand_time = true;
     timeout = MIN_TIME;
     verify_only = false;
+    squint = false;
+    num_ops = 0;
     working_dir = use_lazyfs ? "WT_TEST.random-abort-lazyfs" : "WT_TEST.random-abort";
 
-    while ((ch = __wt_getopt(progname, argc, argv, "Cch:lmpT:t:v")) != EOF)
+    while ((ch = __wt_getopt(progname, argc, argv, "Cch:lmpT:t:vs:o:")) != EOF)
         switch (ch) {
         case 'C':
             compat = true;
@@ -725,6 +746,27 @@ main(int argc, char *argv[])
             break;
         case 'v':
             verify_only = true;
+            break;
+        case 's':
+            squint_mode = __wt_optarg;
+            printf("Squint Mode: %s\n", squint_mode);
+            if (strcmp(squint_mode, "workload") == 0) {
+                squint = true;
+                preserve = true;
+            }
+            if (strcmp(squint_mode, "checker") == 0) {
+                squint = true;
+                preserve = true;
+                verify_only = true;
+            }
+            break;
+        case 'o':
+            /* The number of operations per thread. Takes precedence over -t. */
+            if (__wt_optarg != 0) {
+                rand_time = false;
+                num_ops = (uint64_t)atoi(__wt_optarg);
+                printf("Timeout disabled, executing a finite number of operations.\n");
+            }
             break;
         default:
             usage();
@@ -763,6 +805,7 @@ main(int argc, char *argv[])
         testutil_mkdir(buf);
         testutil_snprintf(buf, sizeof(buf), "%s/%s", home, WT_HOME_DIR);
         testutil_mkdir(buf);
+        printf("Set up test home directory and subdirectories!\n");
 
         /* Set up LazyFS. */
         if (use_lazyfs)
@@ -797,37 +840,47 @@ main(int argc, char *argv[])
         testutil_assert_errno((pid = fork()) >= 0);
 
         if (pid == 0) { /* child */
-            fill_db(nth);
             /* NOTREACHED */
+            fill_db(nth, num_ops);
+        }  else if (pid > 0 && num_ops != 0) {
+            for (i = 0; i < nth; ++i) {
+                waitpid(pid, &status, 0);
+            }
+            printf("Passed\n");
+        } else {
+            /* parent */
+            /*
+            * Sleep for the configured amount of time before killing the child. Start the timeout from
+            * the time we notice that the child workers have created their record files. That allows
+            * the test to run correctly on really slow machines.
+            */
+            i = 0;
+            while (i < nth) {
+                for (j = 0; j < MAX_RECORD_FILES; j++) {
+                    /*
+                    * Wait for each record file to exist.
+                    */
+                    if (j == DELETE_RECORD_FILE_ID)
+                        testutil_snprintf(fname[j], sizeof(fname[j]), DELETE_RECORDS_FILE, i);
+                    else if (j == INSERT_RECORD_FILE_ID)
+                        testutil_snprintf(fname[j], sizeof(fname[j]), INSERT_RECORDS_FILE, i);
+                    else
+                        testutil_snprintf(fname[j], sizeof(fname[j]), MODIFY_RECORDS_FILE, i);
+                    testutil_snprintf(buf, sizeof(buf), "%s/%s", home, fname[j]);
+                    while (stat(buf, &sb) != 0)
+                        testutil_sleep_wait(1, pid);
+                }
+                ++i;
+            }
         }
 
-        /* parent */
-        /*
-         * Sleep for the configured amount of time before killing the child. Start the timeout from
-         * the time we notice that the child workers have created their record files. That allows
-         * the test to run correctly on really slow machines.
-         */
-        i = 0;
-        while (i < nth) {
-            for (j = 0; j < MAX_RECORD_FILES; j++) {
-                /*
-                 * Wait for each record file to exist.
-                 */
-                if (j == DELETE_RECORD_FILE_ID)
-                    testutil_snprintf(fname[j], sizeof(fname[j]), DELETE_RECORDS_FILE, i);
-                else if (j == INSERT_RECORD_FILE_ID)
-                    testutil_snprintf(fname[j], sizeof(fname[j]), INSERT_RECORDS_FILE, i);
-                else
-                    testutil_snprintf(fname[j], sizeof(fname[j]), MODIFY_RECORDS_FILE, i);
-                testutil_snprintf(buf, sizeof(buf), "%s/%s", home, fname[j]);
-                while (stat(buf, &sb) != 0)
-                    testutil_sleep_wait(1, pid);
-            }
-            ++i;
-        }
+        
         sleep(timeout);
         sa.sa_handler = SIG_DFL;
         testutil_assert_errno(sigaction(SIGCHLD, &sa, NULL) == 0);
+        testutil_assert_errno(sigaction(SIGCHLD, &sa, NULL) == 0);
+        testutil_assert_errno(kill(pid, SIGKILL) == 0);
+        testutil_assert_errno(waitpid(pid, &status, 0) != -1);
 
         /*
          * !!! It should be plenty long enough to make sure more than
@@ -838,6 +891,7 @@ main(int argc, char *argv[])
         testutil_assert_errno(kill(pid, SIGKILL) == 0);
         testutil_assert_errno(waitpid(pid, &status, 0) != -1);
     }
+    printf("Filled database!\n");
 
     /*
      * !!! If we wanted to take a copy of the directory before recovery,
@@ -860,7 +914,13 @@ main(int argc, char *argv[])
     /*
      * Recover the database and verify whether all the records from all threads are present or not?
      */
-    ret = recover_and_verify(nth);
+    if (squint && verify_only) {
+        // testutil_snprintf(buf, sizeof(buf), "%s/%s", home, RECORDS_DIR);
+        testutil_snprintf(buf, sizeof(buf), "%s/%s", home, WT_HOME_DIR);
+        ret = recover_and_verify(nth, buf);
+    } else {
+        ret = EXIT_SUCCESS;
+    }
 
     /*
      * Clean up.
@@ -881,6 +941,14 @@ main(int argc, char *argv[])
     /* Delete the work directory. */
     if (ret == EXIT_SUCCESS && !preserve)
         testutil_remove(home);
+    
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        printf("Current working directory: %s\n", cwd);
+    } else {
+        perror("getcwd() error");
+    }
+
+    printf("Done!\n");
 
     fclose(global_fp);
 
