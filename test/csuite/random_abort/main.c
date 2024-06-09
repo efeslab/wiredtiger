@@ -252,6 +252,9 @@ thread_run(void *arg)
 
             while ((ret = cursor->remove(cursor)) == WT_ROLLBACK);
             // printf("Thread %u: ret %d \n", td->id, ret);
+            if (ret != 0) {
+                printf("Thread %u: ret %d with key %" PRIu64 "\n", td->id, ret, i);
+            }
             testutil_assert(ret == 0);
 
             /* Save the key separately for checking later.*/
