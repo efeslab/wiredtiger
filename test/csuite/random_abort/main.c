@@ -95,6 +95,10 @@ static WT_LAZY_FS lazyfs;
 static void handler(int) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
 static void usage(void) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
 
+FILE *global_fp;
+uint64_t global_op_id = 0;
+pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 /*
  * usage --
  *     TODO: Add a comment describing this function.
@@ -135,6 +139,8 @@ thread_run(void *arg)
     char kname[64], lgbuf[8];
     char large[128 * 1024];
     bool columnar_table;
+    uint64_t thread_op_id = 0;
+    uint64_t local_global_op_id = 0;
 
     __wt_random_init(&rnd);
     for (i = 0; i < MAX_RECORD_FILES; i++)
@@ -229,7 +235,14 @@ thread_run(void *arg)
          */
         if (fprintf(fp[INSERT_RECORD_FILE_ID], "%" PRIu64 "\n", i) == -1)
             testutil_die(errno, "fprintf");
-
+        pthread_mutex_lock(&log_mutex);
+        thread_op_id ++;
+        local_global_op_id = global_op_id++;
+        if (fprintf(global_fp, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", INSERT, %" PRIu64 ", %s)\n",
+                    local_global_op_id, td->id, thread_op_id, i, buf) < 0)
+            testutil_die(errno, "fprintf");
+        fflush(global_fp);
+        pthread_mutex_unlock(&log_mutex);
         /*
          * If configured, run compaction on database after each epoch of 100000 operations.
          */
@@ -262,6 +275,14 @@ thread_run(void *arg)
             /* Save the key separately for checking later.*/
             if (fprintf(fp[DELETE_RECORD_FILE_ID], "%" PRIu64 "\n", i) == -1)
                 testutil_die(errno, "fprintf");
+            pthread_mutex_lock(&log_mutex);
+            thread_op_id ++;
+            local_global_op_id = global_op_id++;
+            if (fprintf(global_fp, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", DELETE, %" PRIu64 ")\n",
+                        local_global_op_id, td->id, thread_op_id, i) < 0)
+                testutil_die(errno, "fprintf");
+            fflush(global_fp);
+            pthread_mutex_unlock(&log_mutex);
         } else if (i % MAX_NUM_OPS == OP_TYPE_MODIFY) {
             testutil_snprintf(new_buf, sizeof(new_buf), "modify-%" PRIu64, i);
             new_buf_size = (data.size < MAX_VAL - 1 ? data.size : MAX_VAL - 1);
@@ -303,6 +324,14 @@ thread_run(void *arg)
              */
             if (fprintf(fp[MODIFY_RECORD_FILE_ID], "%s %" PRIu64 "\n", new_buf, i) == -1)
                 testutil_die(errno, "fprintf");
+            pthread_mutex_lock(&log_mutex);
+            thread_op_id ++;
+            local_global_op_id = global_op_id ++;
+            if (fprintf(global_fp, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", MODIFY, %" PRIu64 ", %s)\n",
+                        local_global_op_id, td->id, thread_op_id, i, new_buf) < 0)
+                testutil_die(errno, "fprintf");
+            fflush(global_fp);
+            pthread_mutex_unlock(&log_mutex);
         } else if (i % MAX_NUM_OPS != OP_TYPE_INSERT)
             /* Dead code. To catch any op type misses */
             testutil_die(0, "Unsupported operation type.");
@@ -706,6 +735,12 @@ main(int argc, char *argv[])
 
     testutil_work_dir_from_path(home, sizeof(home), working_dir);
 
+    global_fp = fopen("global_operations.log", "w");
+    if (global_fp == NULL) {
+        perror("Failed to open global operations log file");
+        exit(EXIT_FAILURE);
+    }
+
     /*
      * If the user wants to verify they need to tell us how many threads there were so we can find
      * the old record files.
@@ -846,6 +881,8 @@ main(int argc, char *argv[])
     /* Delete the work directory. */
     if (ret == EXIT_SUCCESS && !preserve)
         testutil_remove(home);
+
+    fclose(global_fp);
 
     return (ret);
 }
