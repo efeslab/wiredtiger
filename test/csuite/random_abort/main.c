@@ -770,7 +770,7 @@ main(int argc, char *argv[])
         testutil_recreate_dir(home);
 
         /* Set up the test subdirectories. */
-        testutil_snprintf(buf, sizeof(buf), "%s/%s", home, RECORDS_DIR);
+        testutil_snprintf(buf, sizeof(buf), "%s", RECORDS_DIR);
         testutil_mkdir(buf);
         testutil_snprintf(buf, sizeof(buf), "%s/%s", home, WT_HOME_DIR);
         testutil_mkdir(buf);

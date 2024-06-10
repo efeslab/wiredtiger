@@ -46,7 +46,7 @@
 #define DEFAULT_TABLE_SCHEMA "key_format=i,value_format=S"
 
 /* Subdirectory names, if we need to split the test directory into multiple subdirectories. */
-#define RECORDS_DIR "records"
+#define RECORDS_DIR "/home/shauncl8/squint/debug/records"
 #define WT_HOME_DIR "WT_HOME"
 
 /* Default file and subdirectory names to use for LazyFS in the tests. */
