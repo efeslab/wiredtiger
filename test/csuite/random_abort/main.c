@@ -686,6 +686,7 @@ main(int argc, char *argv[])
     uint64_t num_ops;
     int ch, ret, status;
     char buf[PATH_MAX];
+    // char log_file_path[1024];
     // char fname[MAX_RECORD_FILES][64];
     char cwd_start[PATH_MAX]; /* The working directory when we started */
     const char *working_dir;
@@ -764,7 +765,10 @@ main(int argc, char *argv[])
     argc -= __wt_optind;
     if (argc != 0)
         usage();
-
+    
+    
+    // snprintf(log_file_path, sizeof(log_file_path), "%s/global_log_file.txt", working_dir);
+    // printf("Log file path: %s\n", log_file_path);
     global_log_file = fopen("global_log_file.txt", "w");
     if (global_log_file == NULL) {
         testutil_die(errno, "fopen: global_log_file.txt");
