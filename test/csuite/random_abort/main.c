@@ -31,6 +31,8 @@
 #include <sys/wait.h>
 #include <signal.h>
 
+#include "hashmap.h"
+
 static char home[PATH_MAX]; /* Program working dir */
 
 /*
@@ -112,6 +114,12 @@ typedef struct {
     uint32_t id;
     uint64_t num_ops;
 } WT_THREAD_DATA;
+
+typedef struct WT_OPS{
+    uint64_t th_id; // thread id 
+    uint64_t th_op_id; // thread local operation id
+    struct WT_OPS* ops;
+} WT_OPS;
 
 // log file to save logs from different threads
 FILE *global_log_file;
@@ -262,7 +270,7 @@ thread_run(void *arg)
             thread_op_id ++;
             global_op_id++;
             local_global_op_id = global_op_id;
-            if (fprintf(global_log_file, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", DELETE, %" PRIu64 ")\n",
+            if (fprintf(global_log_file, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", DELETE, %" PRIu64 ", deleted)\n",
                         local_global_op_id, td->id, thread_op_id, i) < 0)
                 testutil_die(errno, "fprintf");
             pthread_mutex_unlock(&log_mutex);
@@ -671,6 +679,145 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
     return (EXIT_SUCCESS);
 }
 
+static WT_OPS*
+read_completed_log(const char* fname) {
+    FILE *fp;
+    uint64_t thread_id, done;
+    uint32_t thread_op_id;
+    char *line = NULL;
+    size_t len = 0;
+    ssize_t read;
+    WT_OPS * ops_head, *curr_ops;
+
+    fp = fopen(fname, "r");
+    if (fp == NULL) {
+        testutil_die(errno, "fopen: %s", fname);
+    }
+
+    ops_head = (WT_OPS *)malloc(sizeof(WT_OPS));
+    curr_ops = ops_head;
+    ops_head->ops = NULL;
+
+    while ((read = getline(&line, &len, fp)) != -1) {
+        sscanf(line, "%" SCNu64 ", %" SCNu32 ", %" SCNu64 "\n",
+            &thread_id, &thread_op_id, &done);
+        if (done) {
+            // construct WT_OPS struct
+            curr_ops->th_id = thread_id;
+            curr_ops->th_op_id = thread_op_id;
+            curr_ops->ops = (WT_OPS *)malloc(sizeof(WT_OPS));
+            curr_ops = curr_ops->ops;
+            curr_ops->ops = NULL;
+        }
+    }
+
+    fclose(fp);
+    if (line) {
+        free(line);
+    }
+
+    // Ensure the last node's ops is NULL
+    if (curr_ops != ops_head) {
+        free(curr_ops);
+        curr_ops = NULL;
+    }
+
+    return ops_head;
+}
+
+static struct hashmap_s
+read_global_log(const char* log_file_path) {
+    FILE *fp;
+    char buf[MAX_VAL], op[64];
+    uint64_t global_id, thread_op_id, key;
+    uint32_t thread_id;
+    char *line = NULL;
+    size_t len = 0;
+    ssize_t read;
+    WT_OPS *head, *curr_ops, *temp;
+    const unsigned initial_size = 1;
+    struct hashmap_s hashmap;
+
+    fp = fopen(log_file_path, "r");
+    if (fp == NULL) {
+        testutil_die(errno, "fopen: %s", log_file_path);
+    }
+
+    head = read_completed_log("ops_complete.txt");
+    curr_ops = head;
+    if (hashmap_create(initial_size, &hashmap) != 0) {
+        // error!
+        fprintf(stderr, "Error creating hashmap\n");
+    }
+
+    while (curr_ops->ops != NULL) {
+        while ((read = getline(&line, &len, fp)) != -1) {
+            sscanf(line, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", %s, %" PRIu64 ", %s)\n",
+                &global_id, &thread_id, &thread_op_id, op, &key, buf);
+
+            if (curr_ops->th_id == thread_id && curr_ops->th_op_id == thread_op_id) {
+                // convert key to string
+                char key_str[64];
+                testutil_snprintf(key_str, sizeof(key_str), KEY_FORMAT, key);
+
+                if (strcmp(op, "INSERT") == 0) {
+                    // insert the key_val pair into the hashmap
+                    if (hashmap_put(&hashmap, key_str, strlen(key_str), buf) != 0) {
+                        // error!
+                        fprintf(stderr, "Error inserting into hashmap\n");
+                    }
+                } else if (strcmp(op, "DELETE") == 0) {
+                    // delete the key_val pair from the hashmap
+                    if (hashmap_remove(&hashmap, key_str, strlen(key_str)) != 0) {
+                        // error!
+                        fprintf(stderr, "Error deleting from hashmap\n");
+                    }
+                } else if (strcmp(op, "MODIFY") == 0) {
+                    // modify the key_val pair in the hashmap
+                    if (hashmap_put(&hashmap, key_str, strlen(key_str), buf) != 0) {
+                        // error!
+                        fprintf(stderr, "Error updating hashmap\n");
+                    }
+                }
+                break;
+            }
+        }
+        curr_ops = curr_ops->ops;
+    }
+
+    fclose(fp);
+    if (line) {
+        free(line);
+    }
+
+    // Free the WT_OPS list
+    while (head != NULL) {
+        temp = head;
+        head = head->ops;
+        free(temp);
+    }
+
+    return hashmap;
+}
+
+
+static int
+check_db() {
+    // iterate the hashmap and check if the key_val pairs are present in the database
+    // if not present, print the key_val pair
+    struct hashmap_s hashmap;
+    hashmap = read_global_log("global_log_file.txt");
+
+    // Iterate the data base
+
+    // Check the hashmap key 
+
+    // If the key is not present in the hashmap, print the key_val pair
+
+    // If the key is present in the hashmap, remove the key from the 
+    // hashmap_iterate(&hashmap, print_hashmap, NULL);
+}
+
 /*
  * main --
  *     TODO: Add a comment describing this function.
@@ -749,6 +896,11 @@ main(int argc, char *argv[])
                 squint = true;
                 preserve = true;
                 verify_only = true;
+
+                // read the ops_complete file and save the completed the ops
+                // read the global while iterating the list
+                // use the hash map save the key_val pairs
+                // read the database and check if the key_val pairs are present
             }
             break;
         case 'o':
