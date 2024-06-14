@@ -698,6 +698,7 @@ read_completed_log(const char* fname) {
     curr_ops = ops_head;
     ops_head->ops = NULL;
 
+    // Read the file line by line in format (thread_id, thread_op_id, done)
     while ((read = getline(&line, &len, fp)) != -1) {
         sscanf(line, "%" SCNu64 ", %" SCNu32 ", %" SCNu64 "\n",
             &thread_id, &thread_op_id, &done);
@@ -725,11 +726,14 @@ read_completed_log(const char* fname) {
     return ops_head;
 }
 
-static struct hashmap_s
-read_global_log(const char* log_file_path) {
+// Read the global log file and update the hashmap
+// Input: log_file_path - path to the global log file
+// Output: hashmap_out - hashmap to be updated
+static void
+read_global_log(const char* log_file_path, struct hashmap_s* hashmap_out) {
     FILE *fp;
-    char buf[MAX_VAL], op[64];
-    uint64_t global_id, thread_op_id, key;
+    char buf[MAX_VAL], op[64], key[MAX_VAL];
+    uint64_t global_id, thread_op_id;
     uint32_t thread_id;
     char *line = NULL;
     size_t len = 0;
@@ -750,31 +754,30 @@ read_global_log(const char* log_file_path) {
         fprintf(stderr, "Error creating hashmap\n");
     }
 
+    // Iterate the completed operations and update the hashmap    
     while (curr_ops->ops != NULL) {
+        // Get line until the thread_id and thread_op_id match
         while ((read = getline(&line, &len, fp)) != -1) {
-            sscanf(line, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", %s, %" PRIu64 ", %s)\n",
-                &global_id, &thread_id, &thread_op_id, op, &key, buf);
+            // Read the file line by line in format (global_id, thread_id, thread_op_id, op, key, buf)
+            sscanf(line, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", %63s, %1023s, %1023s)\n",
+                &global_id, &thread_id, &thread_op_id, op, key, buf);
 
             if (curr_ops->th_id == thread_id && curr_ops->th_op_id == thread_op_id) {
-                // convert key to string
-                char key_str[64];
-                testutil_snprintf(key_str, sizeof(key_str), KEY_FORMAT, key);
-
                 if (strcmp(op, "INSERT") == 0) {
                     // insert the key_val pair into the hashmap
-                    if (hashmap_put(&hashmap, key_str, strlen(key_str), buf) != 0) {
+                    if (hashmap_put(&hashmap, key, strlen(key), buf) != 0) {
                         // error!
                         fprintf(stderr, "Error inserting into hashmap\n");
                     }
                 } else if (strcmp(op, "DELETE") == 0) {
                     // delete the key_val pair from the hashmap
-                    if (hashmap_remove(&hashmap, key_str, strlen(key_str)) != 0) {
+                    if (hashmap_remove(&hashmap, key, strlen(key)) != 0) {
                         // error!
                         fprintf(stderr, "Error deleting from hashmap\n");
                     }
                 } else if (strcmp(op, "MODIFY") == 0) {
                     // modify the key_val pair in the hashmap
-                    if (hashmap_put(&hashmap, key_str, strlen(key_str), buf) != 0) {
+                    if (hashmap_put(&hashmap, key, strlen(key), buf) != 0) {
                         // error!
                         fprintf(stderr, "Error updating hashmap\n");
                     }
@@ -797,25 +800,100 @@ read_global_log(const char* log_file_path) {
         free(temp);
     }
 
-    return hashmap;
+    *hashmap_out = hashmap;
 }
 
 
+// Check the database for the key_val pairs present in the hashmap
 static int
-check_db() {
-    // iterate the hashmap and check if the key_val pairs are present in the database
-    // if not present, print the key_val pair
+check_db(const char* home_dir) {
     struct hashmap_s hashmap;
-    hashmap = read_global_log("global_log_file.txt");
+    WT_CONNECTION *conn;
+    WT_SESSION *session;
+    WT_CURSOR *cursor;
+    const char *key, *value;
+    char** hashmap_value;
+    int ret;
 
-    // Iterate the data base
+    // Get the hashmap from the global log file
+    read_global_log("global_log_file.txt", &hashmap);
 
-    // Check the hashmap key 
+    // Initialize the WiredTiger database connection
+    if ((ret = wiredtiger_open(home_dir, NULL, "create", &conn)) != 0) {
+        fprintf(stderr, "Error connecting to WiredTiger: %s\n", wiredtiger_strerror(ret));
+        return ret;
+    }
 
-    // If the key is not present in the hashmap, print the key_val pair
+    // Open a session
+    if ((ret = conn->open_session(conn, NULL, NULL, &session)) != 0) {
+        fprintf(stderr, "Error opening session: %s\n", wiredtiger_strerror(ret));
+        return ret;
+    }
 
-    // If the key is present in the hashmap, remove the key from the 
-    // hashmap_iterate(&hashmap, print_hashmap, NULL);
+    // Open the table
+    // Assume the table is named 'table:mytable'
+    if ((ret = session->open_cursor(session, "table:mytable", NULL, NULL, &cursor)) != 0) {
+        fprintf(stderr, "Error opening cursor: %s\n", wiredtiger_strerror(ret));
+        return ret;
+    }
+
+    // Iterate through the table and print the key-value pairs
+    while ((ret = cursor->next(cursor)) == 0) {
+        if ((ret = cursor->get_key(cursor, &key)) != 0) {
+            fprintf(stderr, "Error getting key: %s\n", wiredtiger_strerror(ret));
+            cursor->close(cursor);
+            session->close(session, NULL);
+            conn->close(conn, NULL);
+            hashmap_destroy(&hashmap);
+            return ret;
+        }
+        if ((ret = cursor->get_value(cursor, &value)) != 0) {
+            fprintf(stderr, "Error getting value: %s\n", wiredtiger_strerror(ret));
+            cursor->close(cursor);
+            session->close(session, NULL);
+            conn->close(conn, NULL);
+            hashmap_destroy(&hashmap);
+            return ret;
+        }
+        
+        // Check if the key is present in the hashmap
+        hashmap_value = (char**)hashmap_get(&hashmap, key, strlen(key));
+        if (hashmap_value == NULL || strcmp(*hashmap_value, value) != 0) {
+            // Key not found or value mismatch, print the key-value pair
+            fprintf(stderr, "Mismatch or missing key: Key: %s, Value: %s\n", key, value);
+        } else {
+            // Remove the key from the hashmap
+            hashmap_remove(&hashmap, key, strlen(key));
+        }
+    }
+
+    if (ret != WT_NOTFOUND) {
+        fprintf(stderr, "Error iterating cursor: %s\n", wiredtiger_strerror(ret));
+        cursor->close(cursor);
+        session->close(session, NULL);
+        conn->close(conn, NULL);
+        hashmap_destroy(&hashmap);
+        return EXIT_FAILURE;
+    }
+
+    // check the size of hashmap
+    if (hashmap_num_entries(&hashmap) != 0) {
+        fprintf(stderr, "Error: Hashmap not empty\n");
+        cursor->close(cursor);
+        session->close(session, NULL);
+        conn->close(conn, NULL);
+        hashmap_destroy(&hashmap);
+        return EXIT_FAILURE;
+    }
+
+
+    // Close the cursor, session, and connection
+    cursor->close(cursor);
+    session->close(session, NULL);
+    conn->close(conn, NULL);
+    hashmap_destroy(&hashmap);
+
+    return (EXIT_SUCCESS);
 }
 
 /*
@@ -896,11 +974,6 @@ main(int argc, char *argv[])
                 squint = true;
                 preserve = true;
                 verify_only = true;
-
-                // read the ops_complete file and save the completed the ops
-                // read the global while iterating the list
-                // use the hash map save the key_val pairs
-                // read the database and check if the key_val pairs are present
             }
             break;
         case 'o':
@@ -1051,13 +1124,18 @@ main(int argc, char *argv[])
     /*
      * Recover the database and verify whether all the records from all threads are present or not?
      */
+    fclose(global_log_file);
     if (squint && verify_only) {
+        // testutil_snprintf(buf, sizeof(buf), "%s/%s", home, RECORDS_DIR);
+        testutil_snprintf(buf, sizeof(buf), "%s/%s", home, WT_HOME_DIR);
+        ret = check_db(buf);
+    } else if (verify_only) {
         // testutil_snprintf(buf, sizeof(buf), "%s/%s", home, RECORDS_DIR);
         testutil_snprintf(buf, sizeof(buf), "%s/%s", home, WT_HOME_DIR);
         ret = recover_and_verify(nth, buf);
     } else {
         ret = EXIT_SUCCESS;
-    }
+    } 
 
     /*
      * Clean up.
@@ -1089,7 +1167,6 @@ main(int argc, char *argv[])
     printf("Done!\n");
 
     // close the file and clean the mutex
-    fclose(global_log_file);
     pthread_mutex_destroy(&log_mutex);
     return (ret);
 }
