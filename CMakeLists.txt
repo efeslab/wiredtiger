@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.10.0)
 
+# Set CMP0079 policy to NEW
+if(POLICY CMP0079)
+  cmake_policy(SET CMP0079 NEW)
+endif()
+
 # Try to use CCACHE if available - speeds up build times.
 find_program(CCACHE_FOUND ccache)
 if(CCACHE_FOUND)
@@ -8,6 +13,10 @@ if(CCACHE_FOUND)
 endif(CCACHE_FOUND)
 
 project(WiredTiger C CXX ASM)
+
+# Find GLib using pkg-config
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GLIB REQUIRED glib-2.0)
 
 # Import our available build types prior to initializing the
 # project.
@@ -187,7 +196,9 @@ if(WITH_PIC OR ENABLE_SHARED)
         ${CMAKE_CURRENT_BINARY_DIR}/include
         ${CMAKE_CURRENT_BINARY_DIR}/config
         ${CMAKE_CURRENT_LIST_DIR}/src/include
+        ${GLIB_INCLUDE_DIRS}  # Add GLib include directories
     )
+    target_link_libraries(wt_objs PRIVATE ${GLIB_LDFLAGS})  # Link GLib libraries
     # Append any provided C flags.
     if(COMPILER_DIAGNOSTIC_C_FLAGS)
         target_compile_options(wt_objs PRIVATE ${COMPILER_DIAGNOSTIC_C_FLAGS})

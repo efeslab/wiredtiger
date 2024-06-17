@@ -336,7 +336,6 @@ int hashmap_create_ex(struct hashmap_create_options_s options,
 int hashmap_put(struct hashmap_s *const m, const void *const key,
                 const hashmap_uint32_t len, void *const value) {
   hashmap_uint32_t index;
-
   if ((HASHMAP_NULL == key) || (0 == len)) {
     return 1;
   }

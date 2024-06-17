@@ -14,6 +14,9 @@
 #   LIBS <libs> - Additional libs to link to the test binary.
 #   FLAGS <flags> - Additional flags to compile the test binary with.
 function(create_test_executable target)
+    find_package(PkgConfig REQUIRED)
+    pkg_search_module(GLIB REQUIRED glib-2.0)
+
     cmake_parse_arguments(
         PARSE_ARGV
         1
@@ -86,7 +89,9 @@ function(create_test_executable target)
             ${CMAKE_SOURCE_DIR}/src/include
             ${CMAKE_SOURCE_DIR}/test/utility
             ${CMAKE_BINARY_DIR}/config
+            ${GLIB_INCLUDE_DIRS}  # Add GLib include directories
     )
+    target_link_libraries(${target} ${GLIB_LIBRARIES})  # Link GLib libraries
     if(NOT "${CREATE_TEST_INCLUDES}" STREQUAL "")
         target_include_directories(${target} PRIVATE ${CREATE_TEST_INCLUDES})
     endif()

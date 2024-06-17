@@ -30,8 +30,9 @@
 
 #include <sys/wait.h>
 #include <signal.h>
-
-#include "hashmap.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <glib.h>
 
 static char home[PATH_MAX]; /* Program working dir */
 
@@ -730,57 +731,53 @@ read_completed_log(const char* fname) {
 // Input: log_file_path - path to the global log file
 // Output: hashmap_out - hashmap to be updated
 static void
-read_global_log(const char* log_file_path, struct hashmap_s* hashmap_out) {
+read_global_log(const char* log_file_path, GHashTable **hashmap) { 
     FILE *fp;
-    char buf[MAX_VAL], op[64], key[MAX_VAL];
+    char *buf = (char *)malloc(64 * sizeof(char));
+    char *op = (char *)malloc(64 * sizeof(char));
     uint64_t global_id, thread_op_id;
     uint32_t thread_id;
+    uint32_t key;
     char *line = NULL;
     size_t len = 0;
     ssize_t read;
     WT_OPS *head, *curr_ops, *temp;
-    const unsigned initial_size = 1;
-    struct hashmap_s hashmap;
+    // char* element;
+
 
     fp = fopen(log_file_path, "r");
     if (fp == NULL) {
         testutil_die(errno, "fopen: %s", log_file_path);
     }
 
-    head = read_completed_log("ops_complete.txt");
+    head = read_completed_log("/home/jiexiao/wiredtiger/build/test/csuite/random_abort/ops_completed_log.txt");
     curr_ops = head;
-    if (hashmap_create(initial_size, &hashmap) != 0) {
-        // error!
-        fprintf(stderr, "Error creating hashmap\n");
-    }
+
+    *hashmap = g_hash_table_new(g_direct_hash, g_direct_equal);
 
     // Iterate the completed operations and update the hashmap    
     while (curr_ops->ops != NULL) {
         // Get line until the thread_id and thread_op_id match
         while ((read = getline(&line, &len, fp)) != -1) {
             // Read the file line by line in format (global_id, thread_id, thread_op_id, op, key, buf)
-            sscanf(line, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", %63s, %1023s, %1023s)\n",
-                &global_id, &thread_id, &thread_op_id, op, key, buf);
+            sscanf(line, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", %63[^,], %u, %63[^)\n])\n",
+                &global_id, &thread_id, &thread_op_id, op, &key, buf);
+
+            // let key and buf null terminated
+            // key[strlen(key)] = '\0';
+            buf[strlen(buf)] = '\0';
 
             if (curr_ops->th_id == thread_id && curr_ops->th_op_id == thread_op_id) {
+                printf("Thread %u, op %lu: %s %u %s\n", thread_id, thread_op_id, op, key, buf);
                 if (strcmp(op, "INSERT") == 0) {
                     // insert the key_val pair into the hashmap
-                    if (hashmap_put(&hashmap, key, strlen(key), buf) != 0) {
-                        // error!
-                        fprintf(stderr, "Error inserting into hashmap\n");
-                    }
+                    g_hash_table_insert(*hashmap, GINT_TO_POINTER(key), strdup(buf));
                 } else if (strcmp(op, "DELETE") == 0) {
                     // delete the key_val pair from the hashmap
-                    if (hashmap_remove(&hashmap, key, strlen(key)) != 0) {
-                        // error!
-                        fprintf(stderr, "Error deleting from hashmap\n");
-                    }
+                    g_hash_table_remove(*hashmap, GINT_TO_POINTER(key));
                 } else if (strcmp(op, "MODIFY") == 0) {
                     // modify the key_val pair in the hashmap
-                    if (hashmap_put(&hashmap, key, strlen(key), buf) != 0) {
-                        // error!
-                        fprintf(stderr, "Error updating hashmap\n");
-                    }
+                    g_hash_table_insert(*hashmap, GINT_TO_POINTER(key), strdup(buf));
                 }
                 break;
             }
@@ -793,30 +790,82 @@ read_global_log(const char* log_file_path, struct hashmap_s* hashmap_out) {
         free(line);
     }
 
+    free(buf);
+    free(op);
+    // free(key);
+
     // Free the WT_OPS list
-    while (head != NULL) {
+    while (head->ops != NULL) {
         temp = head;
         head = head->ops;
         free(temp);
     }
-
-    *hashmap_out = hashmap;
 }
+
+// char* remove_leading_zeros(const char* str);
+// char* remove_leading_zeros(const char* str) {
+//     char* new_str = strdup(str);
+//     while (*new_str == '0') {
+//         new_str++;
+//     }
+//     if (*new_str == '\0') {
+//         return strdup("0");
+//     }
+//     return new_str;
+// }
 
 
 // Check the database for the key_val pairs present in the hashmap
+// return 0 if the key_val pairs are present in the database
+// return 1 if the key_val pairs are not present in the database
 static int
 check_db(const char* home_dir) {
-    struct hashmap_s hashmap;
     WT_CONNECTION *conn;
     WT_SESSION *session;
     WT_CURSOR *cursor;
-    const char *key, *value;
-    char** hashmap_value;
+    uint32_t key_val;
+    char *key;  
+    WT_ITEM data;
+    char* hashmap_value;
     int ret;
+    GHashTable* hashmap = NULL;
+
+    unsigned num_entries;
+    // GHashTableIter iter;
+    // gpointer key_ptr, value_ptr;
+
+    int notFound = 0;
 
     // Get the hashmap from the global log file
-    read_global_log("global_log_file.txt", &hashmap);
+    read_global_log("/home/jiexiao/wiredtiger/build/test/csuite/random_abort/global_log_file.txt", &hashmap);
+    num_entries = g_hash_table_size(hashmap);
+    printf("Number of entries in hashmap: %u\n", num_entries);
+    
+    
+    // // print all key value pairs in hashmap
+    /////////////////////////////////////////////////////////////////////////////////////
+    // g_hash_table_iter_init(&iter, hashmap);
+    // while (g_hash_table_iter_next(&iter, &key_ptr, &value_ptr)) {
+    //     printf("Key: %d, Value: %s\n", GPOINTER_TO_INT(key_ptr), (char*)value_ptr);
+    // }
+    // if (!g_hash_table_contains(hashmap, key_ptr)) {
+    //     // Key not found in hashmap, print the key-value pair
+    //     fprintf(stderr, "Key not found in hashmap: Key: %d, Value: %s\n", GPOINTER_TO_INT(key_ptr), value);
+    // }
+    // hashmap_value = (char *)g_hash_table_lookup(hashmap, key_ptr);
+    // // print hashmap_value
+    // printf("Hashmap value: %s\n", hashmap_value);
+
+
+    // if (!g_hash_table_contains(hashmap, GINT_TO_POINTER(1))) {
+    //     // Key not found in hashmap, print the key-value pair
+    //     fprintf(stderr, "Key not found in hashmap: Key: %d, Value: %s\n", 1, value);
+    // }
+    // hashmap_value = (char *)g_hash_table_lookup(hashmap, GINT_TO_POINTER(1));
+    // // print hashmap_value
+    // printf("Hashmap value: %s\n", hashmap_value);
+    /////////////////////////////////////////////////////////////////////////////
+
 
     // Initialize the WiredTiger database connection
     if ((ret = wiredtiger_open(home_dir, NULL, "create", &conn)) != 0) {
@@ -832,7 +881,7 @@ check_db(const char* home_dir) {
 
     // Open the table
     // Assume the table is named 'table:mytable'
-    if ((ret = session->open_cursor(session, "table:mytable", NULL, NULL, &cursor)) != 0) {
+    if ((ret = session->open_cursor(session, "table:main", NULL, NULL, &cursor)) != 0) {
         fprintf(stderr, "Error opening cursor: %s\n", wiredtiger_strerror(ret));
         return ret;
     }
@@ -844,26 +893,35 @@ check_db(const char* home_dir) {
             cursor->close(cursor);
             session->close(session, NULL);
             conn->close(conn, NULL);
-            hashmap_destroy(&hashmap);
+            g_hash_table_destroy(hashmap);
             return ret;
         }
-        if ((ret = cursor->get_value(cursor, &value)) != 0) {
+
+        key_val = (uint32_t)atoi(key);
+
+        // Check if the key is present in the hashmap
+        hashmap_value = (char *)g_hash_table_lookup(hashmap, GINT_TO_POINTER(key_val));
+        
+        // print hashmap_value
+        // printf("Key: %u\n", key_val);
+        // printf("Hashmap value: %s\n", hashmap_value);
+
+        if ((ret = cursor->get_value(cursor, &data)) != 0) {
             fprintf(stderr, "Error getting value: %s\n", wiredtiger_strerror(ret));
             cursor->close(cursor);
             session->close(session, NULL);
             conn->close(conn, NULL);
-            hashmap_destroy(&hashmap);
+            g_hash_table_destroy(hashmap);
             return ret;
         }
-        
-        // Check if the key is present in the hashmap
-        hashmap_value = (char**)hashmap_get(&hashmap, key, strlen(key));
-        if (hashmap_value == NULL || strcmp(*hashmap_value, value) != 0) {
+
+         if (hashmap_value == NULL || strcmp(hashmap_value, (char *)data.data) != 0) {
             // Key not found or value mismatch, print the key-value pair
-            fprintf(stderr, "Mismatch or missing key: Key: %s, Value: %s\n", key, value);
+            fprintf(stderr, "Mismatch or missing key: Key: %u, actual value: %s, expected value: %s\n", key_val, hashmap_value, (char *)data.data);
+            notFound = 1;
         } else {
             // Remove the key from the hashmap
-            hashmap_remove(&hashmap, key, strlen(key));
+            g_hash_table_remove(hashmap, GINT_TO_POINTER(key_val));
         }
     }
 
@@ -872,17 +930,17 @@ check_db(const char* home_dir) {
         cursor->close(cursor);
         session->close(session, NULL);
         conn->close(conn, NULL);
-        hashmap_destroy(&hashmap);
+        g_hash_table_destroy(hashmap);
         return EXIT_FAILURE;
     }
 
     // check the size of hashmap
-    if (hashmap_num_entries(&hashmap) != 0) {
+    if (g_hash_table_size(hashmap) != 0) {
         fprintf(stderr, "Error: Hashmap not empty\n");
         cursor->close(cursor);
         session->close(session, NULL);
         conn->close(conn, NULL);
-        hashmap_destroy(&hashmap);
+        g_hash_table_destroy(hashmap);
         return EXIT_FAILURE;
     }
 
@@ -891,9 +949,9 @@ check_db(const char* home_dir) {
     cursor->close(cursor);
     session->close(session, NULL);
     conn->close(conn, NULL);
-    hashmap_destroy(&hashmap);
+    g_hash_table_destroy(hashmap);
 
-    return (EXIT_SUCCESS);
+    return notFound;
 }
 
 /*
@@ -942,6 +1000,7 @@ main(int argc, char *argv[])
             break;
         case 'h':
             working_dir = __wt_optarg;
+            while (isspace(*working_dir)) working_dir++;
             break;
         case 'l':
             use_lazyfs = true;
@@ -965,6 +1024,8 @@ main(int argc, char *argv[])
             break;
         case 's':
             squint_mode = __wt_optarg;
+            // remove any numbers of trailing space in the beginning
+            while (isspace(*squint_mode)) squint_mode++;
             printf("Squint Mode: %s\n", squint_mode);
             if (strcmp(squint_mode, "workload") == 0) {
                 squint = true;
@@ -1124,11 +1185,17 @@ main(int argc, char *argv[])
     /*
      * Recover the database and verify whether all the records from all threads are present or not?
      */
-    fclose(global_log_file);
     if (squint && verify_only) {
         // testutil_snprintf(buf, sizeof(buf), "%s/%s", home, RECORDS_DIR);
+        // wait thread finish
         testutil_snprintf(buf, sizeof(buf), "%s/%s", home, WT_HOME_DIR);
         ret = check_db(buf);
+        if (ret != 0) {
+            printf("Mismatch or missing key-value pairs in the database\n");
+        } else {
+            printf("All key-value pairs are present in the database\n");
+        }
+
     } else if (verify_only) {
         // testutil_snprintf(buf, sizeof(buf), "%s/%s", home, RECORDS_DIR);
         testutil_snprintf(buf, sizeof(buf), "%s/%s", home, WT_HOME_DIR);
