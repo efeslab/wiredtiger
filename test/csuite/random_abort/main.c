@@ -802,19 +802,6 @@ read_global_log(const char* log_file_path, GHashTable **hashmap) {
     }
 }
 
-// char* remove_leading_zeros(const char* str);
-// char* remove_leading_zeros(const char* str) {
-//     char* new_str = strdup(str);
-//     while (*new_str == '0') {
-//         new_str++;
-//     }
-//     if (*new_str == '\0') {
-//         return strdup("0");
-//     }
-//     return new_str;
-// }
-
-
 // Check the database for the key_val pairs present in the hashmap
 // return 0 if the key_val pairs are present in the database
 // return 1 if the key_val pairs are not present in the database
@@ -954,6 +941,114 @@ check_db(const char* home_dir) {
     return notFound;
 }
 
+static void 
+copy_directory(const char *src, const char *dst) {
+    DIR *dir = opendir(src);
+    struct dirent *entry;
+    char src_path[1024];
+    char dst_path[1024];
+    struct stat statbuf;
+
+    mkdir(dst, 0755);
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        snprintf(src_path, sizeof(src_path), "%s/%s", src, entry->d_name);
+        snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, entry->d_name);
+
+        stat(src_path, &statbuf);
+
+        if (S_ISDIR(statbuf.st_mode)) {
+            copy_directory(src_path, dst_path);
+        } else {
+            FILE *src_file = fopen(src_path, "rb");
+            FILE *dst_file = fopen(dst_path, "wb");
+
+            char buffer[4096];
+            size_t bytes;
+
+            while ((bytes = fread(buffer, 1, sizeof(buffer), src_file)) > 0) {
+                fwrite(buffer, 1, bytes, dst_file);
+            }
+
+            fclose(src_file);
+            fclose(dst_file);
+        }
+    }
+    closedir(dir);
+}
+
+static int
+test_backup(const char* home_dir, const char* copy_dir) {
+    WT_CONNECTION *conn;
+    WT_SESSION *session;
+    WT_CURSOR *cursor;
+    WT_CURSOR *backup_cursor;
+    int ret = 0;
+    // char* backup_dir = "/home/jiexiao/wiredtiger/build/test/csuite/random_abort/backup";
+
+    // Initialize the WiredTiger database connection
+    if ((ret = wiredtiger_open(home_dir, NULL, "create", &conn)) != 0) {
+        fprintf(stderr, "Error connecting to WiredTiger: %s\n", wiredtiger_strerror(ret));
+        return ret;
+    }
+
+    // Open a session
+    if ((ret = conn->open_session(conn, NULL, NULL, &session)) != 0) {
+        fprintf(stderr, "Error opening session: %s\n", wiredtiger_strerror(ret));
+        return ret;
+    }
+
+    // Open the table
+    // Assume the table is named 'table:mytable'
+    if ((ret = session->open_cursor(session, "table:main", NULL, NULL, &cursor)) != 0) {
+        fprintf(stderr, "Error opening cursor: %s\n", wiredtiger_strerror(ret));
+        return ret;
+    }
+
+    // Backup the database
+    if ((ret = session->open_cursor(session, "backup:", NULL, NULL, &backup_cursor)) != 0) {
+        fprintf(stderr, "Error backing up database: %s\n", wiredtiger_strerror(ret));
+        return ret;
+    }
+
+    copy_directory(home_dir, copy_dir);
+
+    // Close the cursor, session, and connection
+    cursor->close(cursor);
+    session->close(session, NULL);
+    conn->close(conn, NULL);
+
+    // Open connection to the copied directory and verify the data
+    if ((ret = wiredtiger_open(copy_dir, NULL, "create", &conn)) != 0) {
+        fprintf(stderr, "Error connecting to WiredTiger: %s\n", wiredtiger_strerror(ret));
+        return ret;
+    }
+
+    // Open a session
+    if ((ret = conn->open_session(conn, NULL, NULL, &session)) != 0) {
+        fprintf(stderr, "Error opening session: %s\n", wiredtiger_strerror(ret));
+        return ret;
+    }
+
+    // close the session and connection
+    cursor->close(cursor);
+    backup_cursor->close(backup_cursor);
+    session->close(session, NULL);
+    conn->close(conn, NULL);
+
+    return (EXIT_SUCCESS);
+}
+
+static int 
+check_backup(const char* home_dir) {
+    printf("home dir: %s\n", home_dir);
+    return EXIT_SUCCESS;
+}
+
 /*
  * main --
  *     TODO: Add a comment describing this function.
@@ -967,14 +1062,16 @@ main(int argc, char *argv[])
     pid_t pid;
     uint32_t i, nth, timeout;
     uint64_t num_ops;
-    int ch, ret, status;
+    int ch;
+    int ret = 0; 
+    int status;
     char buf[PATH_MAX];
     // char log_file_path[1024];
     // char fname[MAX_RECORD_FILES][64];
     char cwd_start[PATH_MAX]; /* The working directory when we started */
     const char *working_dir;
     const char *squint_mode;
-    bool preserve, rand_th, rand_time, verify_only, squint;
+    bool preserve, rand_th, rand_time, verify_only, squint, backup;
     char cwd[1024]; // DELETE
 
     (void)testutil_set_progname(argv);
@@ -987,6 +1084,7 @@ main(int argc, char *argv[])
     timeout = MIN_TIME;
     verify_only = false;
     squint = false;
+    backup = false;
     num_ops = 0;
     working_dir = use_lazyfs ? "WT_TEST.random-abort-lazyfs" : "WT_TEST.random-abort";
 
@@ -1035,6 +1133,17 @@ main(int argc, char *argv[])
                 squint = true;
                 preserve = true;
                 verify_only = true;
+            }
+            if (strcmp(squint_mode, "backup-workload") == 0) {
+                squint = true;
+                preserve = true;
+                backup = true;
+            }
+            if (strcmp(squint_mode, "backup-checker") == 0) {
+                squint = true;
+                preserve = true;
+                verify_only = true;
+                backup = true;
             }
             break;
         case 'o':
@@ -1189,18 +1298,35 @@ main(int argc, char *argv[])
         // testutil_snprintf(buf, sizeof(buf), "%s/%s", home, RECORDS_DIR);
         // wait thread finish
         testutil_snprintf(buf, sizeof(buf), "%s/%s", home, WT_HOME_DIR);
-        ret = check_db(buf);
-        if (ret != 0) {
-            printf("Mismatch or missing key-value pairs in the database\n");
+        if (backup) {
+            ret = check_backup(buf);
+            if (ret != EXIT_SUCCESS) {
+                printf("Backup failed\n");
+            } else {
+                printf("Backup succeeded\n");
+            }
         } else {
-            printf("All key-value pairs are present in the database\n");
+            if (check_db(buf)!= 0) {
+                printf("Mismatch or missing key-value pairs in the database\n");
+            } else {
+                printf("All key-value pairs are present in the database\n");
+            }
         }
-
     } else if (verify_only) {
         // testutil_snprintf(buf, sizeof(buf), "%s/%s", home, RECORDS_DIR);
         testutil_snprintf(buf, sizeof(buf), "%s/%s", home, WT_HOME_DIR);
         ret = recover_and_verify(nth, buf);
     } else {
+        if (backup) {
+            ret = test_backup(buf, "/home/jiexiao/wiredtiger/logs/backup");
+            if (ret != EXIT_SUCCESS) {
+                printf("Backup failed\n");
+            } else {
+                printf("Backup succeeded\n");
+            }
+        } else {
+            ret = recover_and_verify(nth, buf);
+        }
         ret = EXIT_SUCCESS;
     } 
 
