@@ -89,8 +89,8 @@ def check_needed_dependencies(builtins, inc_paths, lib_paths):
     # discoverable via /sbin/ldconfig. It might be better to write a tiny
     # compile using  -lsnappy, -lz...
     #
-    #if len(missing) > 0:
-    #    die("install packages for: " + str(missing))
+    if len(missing) > 0:
+       die("install packages for: " + str(missing))
 
 # get_compile_flags --
 #   Get system specific compile flags.  Return a triple: C preprocessor
@@ -225,6 +225,9 @@ configure_cmds = [
 make_cmds = []
 for name in builtin_names:
     make_cmds.append('ninja -C ' + build_dir  +  ' ext/compressors/' + name + '/all')
+    print(make_cmds[-1])
+    
+
 make_cmds.append('ninja -C ' + build_dir + ' libwiredtiger.a')
 make_cmds.append('ninja -C ' + build_dir + ' lang/python/all')
 
