@@ -149,7 +149,9 @@ static void usage(void) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
 static void
 usage(void)
 {
-    fprintf(stderr, "usage: %s [-h dir] [-T threads] [-t time] [-vz]\n", progname);
+    // NOT NEEDED FOR SQUINT.
+    // fprintf(stderr, "usage: %s [-h dir] [-T threads] [-t time] [-vz]\n", progname);
+    printf("usage: %s [-h dir] [-T threads] [-t time] [-vz]\n", progname);
     exit(EXIT_FAILURE);
 }
 
@@ -410,7 +412,7 @@ thread_run(void *arg)
         testutil_check(pthread_rwlock_unlock(&flush_lock));
         locked = false;
 
-        /* Save the timestamps and key separately for checking later. */
+        /* Save the timestamps and key separately for checking later. NO NEED? */
         if (fprintf(fp, "%" PRIu64 " %" PRIu64 " %" PRIu64 "\n", active_ts, active_ts, i) < 0)
             testutil_die(EIO, "fprintf");
 
@@ -604,8 +606,10 @@ verify_tiered(WT_SESSION *session)
             last = (uint32_t)cval.val;
             testutil_check(__wt_config_getones((WT_SESSION_IMPL *)session, value, "oldest", &cval));
             oldest = (uint32_t)cval.val;
-            fprintf(
-              stderr, "VERIFY_TIERED: %s last %" PRIu32 " oldest %" PRIu32 "\n", key, last, oldest);
+            // NOT NEEDED FOR SQUINT.
+            // fprintf(
+            //   stderr, "VERIFY_TIERED: %s last %" PRIu32 " oldest %" PRIu32 "\n", key, last, oldest);
+            printf("VERIFY_TIERED: %s last %" PRIu32 " oldest %" PRIu32 "\n", key, last, oldest);
             testutil_check(__wt_tiered_name_str(
               (WT_SESSION_IMPL *)session, key, last, WT_TIERED_NAME_ONLY, &name));
             /* Verify the latest object is in the local directory. */
@@ -665,10 +669,11 @@ main(int argc, char *argv[])
     uint32_t i, timeout;
     int ch, status, ret;
     const char *working_dir;
+    const char *squint_mode;
     char buf[512], bucket_dir[512], build_dir[512], fname[512], kname[64];
     char envconf[1024], extconf[512];
     char ts_string[WT_TS_HEX_STRING_SIZE];
-    bool fatal, preserve, rand_th, rand_time, verify_only;
+    bool fatal, preserve, rand_th, rand_time, verify_only, squint;
 
     (void)testutil_set_progname(argv);
     opts = &_opts;
@@ -679,9 +684,10 @@ main(int argc, char *argv[])
     rand_th = rand_time = true;
     timeout = MIN_TIME;
     verify_only = false;
+    squint = false;
     working_dir = "WT_TEST.tiered-abort";
 
-    while ((ch = __wt_getopt(progname, argc, argv, "b:f:h:pT:t:vz")) != EOF)
+    while ((ch = __wt_getopt(progname, argc, argv, "b:f:h:pT:t:vzs:")) != EOF)
         switch (ch) {
         case 'b': /* Build directory */
             opts->build_dir = dstrdup(__wt_optarg);
@@ -699,8 +705,10 @@ main(int argc, char *argv[])
             rand_th = false;
             nth = (uint32_t)atoi(__wt_optarg);
             if (nth > MAX_TH) {
-                fprintf(
-                  stderr, "Number of threads is larger than the maximum %" PRId32 "\n", MAX_TH);
+                // NOT NEEDED FOR SQUINT.
+                // fprintf(
+                //   stderr, "Number of threads is larger than the maximum %" PRId32 "\n", MAX_TH);
+                printf("Number of threads is larger than the maximum %" PRId32 "\n", MAX_TH);
                 return (EXIT_FAILURE);
             }
             break;
@@ -713,6 +721,19 @@ main(int argc, char *argv[])
             break;
         case 'z':
             use_ts = false;
+            break;
+        case 's':
+            squint_mode = __wt_optarg;
+            printf("Squint Mode: %s\n", squint_mode);
+            if (strcmp(squint_mode, "workload") == 0) {
+                squint = true;
+                preserve = true;
+            }
+            if (strcmp(squint_mode, "checker") == 0) {
+                squint = true;
+                preserve = true;
+                verify_only = true;
+            }
             break;
         default:
             usage();
@@ -737,7 +758,9 @@ main(int argc, char *argv[])
      * the old record files.
      */
     if (verify_only && rand_th) {
-        fprintf(stderr, "Verify option requires specifying number of threads\n");
+        // NOT NEEDED FOR SQUINT.
+        // fprintf(stderr, "Verify option requires specifying number of threads\n");
+        printf("Verify option requires specifying number of threads\n");
         exit(EXIT_FAILURE);
     }
     if (!verify_only) {
@@ -808,220 +831,228 @@ main(int argc, char *argv[])
     if (chdir(home) != 0)
         testutil_die(errno, "parent chdir: %s", home);
 
-    if (!verify_only)
+    // Backup incompatible with squint.
+    if (!verify_only && !squint)
         /* Copy the data to a separate folder for debugging purpose. */
         testutil_copy_data(home);
 
     /* Come back to root directory, so we can link wiredtiger with extensions properly. */
     if (chdir("../") != 0)
         testutil_die(errno, "root chdir: %s", home);
+    
+    // In checker mode.
+    if (verify_only) {
+        printf("Open database, run recovery and verify content\n");
 
-    printf("Open database, run recovery and verify content\n");
+        /* Open the connection which forces recovery to be run. */
+        testutil_check(__wt_snprintf(envconf, sizeof(envconf), ENV_CONFIG_REC));
 
-    /* Open the connection which forces recovery to be run. */
-    testutil_check(__wt_snprintf(envconf, sizeof(envconf), ENV_CONFIG_REC));
+        testutil_check(__wt_snprintf(extconf, sizeof(extconf), ",extensions=(%s/%s=(early_load=true))",
+        build_dir, WT_STORAGE_LIB));
 
-    testutil_check(__wt_snprintf(extconf, sizeof(extconf), ",extensions=(%s/%s=(early_load=true))",
-      build_dir, WT_STORAGE_LIB));
-
-    strcat(envconf, extconf);
-    testutil_check(wiredtiger_open(home, NULL, envconf, &conn));
-    testutil_check(conn->open_session(conn, NULL, NULL, &session));
-    /*
-     * Call flush_tier after crash to run code to restart object copying. Then sleep for the
-     * interval to let the internal thread remove cached objects. By doing that we can then verify
-     * what objects are where.
-     */
-    testutil_check(session->flush_tier(session, "force=true"));
-    /* Sleep long enough to let the retention period expire and be noticed by the thread. */
-    sleep(LOCAL_RETENTION + INTERVAL + 1);
-    verify_tiered(session);
-
-    /* Open a cursor on all the tables. */
-    testutil_check(__wt_snprintf(buf, sizeof(buf), "%s:%s", table_pfx, uri_collection));
-    testutil_check(session->open_cursor(session, buf, NULL, NULL, &cur_coll));
-    testutil_check(__wt_snprintf(buf, sizeof(buf), "%s:%s", table_pfx, uri_shadow));
-    testutil_check(session->open_cursor(session, buf, NULL, NULL, &cur_shadow));
-    testutil_check(__wt_snprintf(buf, sizeof(buf), "%s:%s", table_pfx, uri_local));
-    testutil_check(session->open_cursor(session, buf, NULL, NULL, &cur_local));
-    testutil_check(__wt_snprintf(buf, sizeof(buf), "%s:%s", table_pfx, uri_oplog));
-    testutil_check(session->open_cursor(session, buf, NULL, NULL, &cur_oplog));
-
-    /* Find the biggest stable timestamp value that was saved. */
-    stable_val = 0;
-    if (use_ts) {
-        testutil_check(conn->query_timestamp(conn, ts_string, "get=recovery"));
-        testutil_assert(sscanf(ts_string, "%" SCNx64, &stable_val) == 1);
-        printf("Got stable_val %" PRIu64 "\n", stable_val);
-    }
-
-    count = 0;
-    absent_coll = absent_local = absent_oplog = absent_shadow = 0;
-    fatal = false;
-    for (i = 0; i < nth; ++i) {
-        initialize_rep(&c_rep[i]);
-        initialize_rep(&l_rep[i]);
-        initialize_rep(&o_rep[i]);
-        testutil_check(__wt_snprintf(fname, sizeof(fname), RECORDS_FILE, home, i));
-        if ((fp = fopen(fname, "r")) == NULL)
-            testutil_die(errno, "fopen: %s", fname);
-
+        strcat(envconf, extconf);
+        testutil_check(wiredtiger_open(home, NULL, envconf, &conn));
+        testutil_check(conn->open_session(conn, NULL, NULL, &session));
         /*
-         * For every key in the saved file, verify that the key exists in the table after recovery.
-         * If we're doing in-memory log buffering we never expect a record missing in the middle,
-         * but records may be missing at the end. If we did write-no-sync, we expect every key to
-         * have been recovered.
-         */
-        for (last_key = INVALID_KEY;; ++count, last_key = key) {
-            ret = fscanf(fp, "%" SCNu64 "%" SCNu64 "%" SCNu64 "\n", &commit_fp, &durable_fp, &key);
-            if (last_key == INVALID_KEY) {
-                c_rep[i].first_key = key;
-                l_rep[i].first_key = key;
-                o_rep[i].first_key = key;
-            }
-            if (ret != EOF && ret != 3) {
-                /* If we find a partial line, consider it like an EOF. */
-                if (ret == 2 || ret == 1 || ret == 0)
-                    break;
-                testutil_die(errno, "fscanf");
-            }
-            if (ret == EOF)
-                break;
-            /*
-             * If we're unlucky, the last line may be a partially written key at the end that can
-             * result in a false negative error for a missing record. Detect it.
-             */
-            if (last_key != INVALID_KEY && key != last_key + 1) {
-                printf("%s: Ignore partial record %" PRIu64 " last valid key %" PRIu64 "\n", fname,
-                  key, last_key);
-                break;
-            }
-            testutil_check(__wt_snprintf(kname, sizeof(kname), KEY_FORMAT, key));
-            cur_coll->set_key(cur_coll, kname);
-            cur_local->set_key(cur_local, kname);
-            cur_oplog->set_key(cur_oplog, kname);
-            cur_shadow->set_key(cur_shadow, kname);
-            /*
-             * The collection table should always only have the data as of the checkpoint. The
-             * shadow table should always have the exact same data (or not) as the collection table,
-             * except for the last key that may be committed after the stable timestamp.
-             */
-            if ((ret = cur_coll->search(cur_coll)) != 0) {
-                if (ret != WT_NOTFOUND)
-                    testutil_die(ret, "search");
-                if ((ret = cur_shadow->search(cur_shadow)) == 0)
-                    testutil_die(ret, "shadow search success");
+        * Call flush_tier after crash to run code to restart object copying. Then sleep for the
+        * interval to let the internal thread remove cached objects. By doing that we can then verify
+        * what objects are where.
+        */
+        testutil_check(session->flush_tier(session, "force=true"));
+        /* Sleep long enough to let the retention period expire and be noticed by the thread. */
+        sleep(LOCAL_RETENTION + INTERVAL + 1);
+        verify_tiered(session);
 
-                /*
-                 * If we don't find a record, the durable timestamp written to our file better be
-                 * larger than the saved one.
-                 */
-                if (durable_fp != 0 && durable_fp <= stable_val) {
-                    printf("%s: COLLECTION no record with key %" PRIu64
-                           " record durable ts %" PRIu64 " <= stable ts %" PRIu64 "\n",
-                      fname, key, durable_fp, stable_val);
-                    absent_coll++;
-                }
-                if (c_rep[i].first_miss == INVALID_KEY)
-                    c_rep[i].first_miss = key;
-                c_rep[i].absent_key = key;
-            } else if ((ret = cur_shadow->search(cur_shadow)) != 0) {
-                if (ret != WT_NOTFOUND)
-                    testutil_die(ret, "shadow search");
-                /*
-                 * We respectively insert the record to the collection table at timestamp t and to
-                 * the shadow table at t + 1. If the checkpoint finishes at timestamp t, the last
-                 * shadow table record will be removed by rollback to stable after restart.
-                 */
-                if (durable_fp <= stable_val) {
-                    printf("%s: SHADOW no record with key %" PRIu64 "\n", fname, key);
-                    absent_shadow++;
-                }
-            } else if (c_rep[i].absent_key != INVALID_KEY && c_rep[i].exist_key == INVALID_KEY) {
-                /*
-                 * If we get here we found a record that exists after absent records, a hole in our
-                 * data.
-                 */
-                c_rep[i].exist_key = key;
-                fatal = true;
-            } else if (commit_fp != 0 && commit_fp > stable_val) {
-                /*
-                 * If we found a record, the commit timestamp written to our file better be no
-                 * larger than the checkpoint one.
-                 */
-                printf("%s: COLLECTION record with key %" PRIu64 " commit record ts %" PRIu64
-                       " > stable ts %" PRIu64 "\n",
-                  fname, key, commit_fp, stable_val);
-                fatal = true;
-            } else if ((ret = cur_shadow->search(cur_shadow)) != 0)
-                /* Collection and shadow both have the data. */
-                testutil_die(ret, "shadow search failure");
+        /* Open a cursor on all the tables. */
+        testutil_check(__wt_snprintf(buf, sizeof(buf), "%s:%s", table_pfx, uri_collection));
+        testutil_check(session->open_cursor(session, buf, NULL, NULL, &cur_coll));
+        testutil_check(__wt_snprintf(buf, sizeof(buf), "%s:%s", table_pfx, uri_shadow));
+        testutil_check(session->open_cursor(session, buf, NULL, NULL, &cur_shadow));
+        testutil_check(__wt_snprintf(buf, sizeof(buf), "%s:%s", table_pfx, uri_local));
+        testutil_check(session->open_cursor(session, buf, NULL, NULL, &cur_local));
+        testutil_check(__wt_snprintf(buf, sizeof(buf), "%s:%s", table_pfx, uri_oplog));
+        testutil_check(session->open_cursor(session, buf, NULL, NULL, &cur_oplog));
 
-            /* The local table should always have all data. */
-            if ((ret = cur_local->search(cur_local)) != 0) {
-                if (ret != WT_NOTFOUND)
-                    testutil_die(ret, "search");
-                printf("%s: LOCAL no record with key %" PRIu64 "\n", fname, key);
-                absent_local++;
-                if (l_rep[i].first_miss == INVALID_KEY)
-                    l_rep[i].first_miss = key;
-                l_rep[i].absent_key = key;
-            } else if (l_rep[i].absent_key != INVALID_KEY && l_rep[i].exist_key == INVALID_KEY) {
-                /* We should never find an existing key after we have detected one missing. */
-                l_rep[i].exist_key = key;
-                fatal = true;
-            }
-            /* The oplog table should always have all data. */
-            if ((ret = cur_oplog->search(cur_oplog)) != 0) {
-                if (ret != WT_NOTFOUND)
-                    testutil_die(ret, "search");
-                printf("%s: OPLOG no record with key %" PRIu64 "\n", fname, key);
-                absent_oplog++;
-                if (o_rep[i].first_miss == INVALID_KEY)
-                    o_rep[i].first_miss = key;
-                o_rep[i].absent_key = key;
-            } else if (o_rep[i].absent_key != INVALID_KEY && o_rep[i].exist_key == INVALID_KEY) {
-                /* We should never find an existing key after we have detected one missing. */
-                o_rep[i].exist_key = key;
-                fatal = true;
-            }
+        /* Find the biggest stable timestamp value that was saved. */
+        stable_val = 0;
+        if (use_ts) {
+            testutil_check(conn->query_timestamp(conn, ts_string, "get=recovery"));
+            testutil_assert(sscanf(ts_string, "%" SCNx64, &stable_val) == 1);
+            printf("Got stable_val %" PRIu64 "\n", stable_val);
         }
-        c_rep[i].last_key = last_key;
-        l_rep[i].last_key = last_key;
-        o_rep[i].last_key = last_key;
-        testutil_assert_errno(fclose(fp) == 0);
-        print_missing(&c_rep[i], fname, "COLLECTION");
-        print_missing(&l_rep[i], fname, "LOCAL");
-        print_missing(&o_rep[i], fname, "OPLOG");
+
+        count = 0;
+        absent_coll = absent_local = absent_oplog = absent_shadow = 0;
+        fatal = false;
+        for (i = 0; i < nth; ++i) {
+            initialize_rep(&c_rep[i]);
+            initialize_rep(&l_rep[i]);
+            initialize_rep(&o_rep[i]);
+            testutil_check(__wt_snprintf(fname, sizeof(fname), RECORDS_FILE, home, i));
+            if ((fp = fopen(fname, "r")) == NULL)
+                testutil_die(errno, "fopen: %s", fname);
+
+            /*
+            * For every key in the saved file, verify that the key exists in the table after recovery.
+            * If we're doing in-memory log buffering we never expect a record missing in the middle,
+            * but records may be missing at the end. If we did write-no-sync, we expect every key to
+            * have been recovered.
+            */
+            for (last_key = INVALID_KEY;; ++count, last_key = key) {
+                ret = fscanf(fp, "%" SCNu64 "%" SCNu64 "%" SCNu64 "\n", &commit_fp, &durable_fp, &key);
+                if (last_key == INVALID_KEY) {
+                    c_rep[i].first_key = key;
+                    l_rep[i].first_key = key;
+                    o_rep[i].first_key = key;
+                }
+                if (ret != EOF && ret != 3) {
+                    /* If we find a partial line, consider it like an EOF. */
+                    if (ret == 2 || ret == 1 || ret == 0)
+                        break;
+                    testutil_die(errno, "fscanf");
+                }
+                if (ret == EOF)
+                    break;
+                /*
+                * If we're unlucky, the last line may be a partially written key at the end that can
+                * result in a false negative error for a missing record. Detect it.
+                */
+                if (last_key != INVALID_KEY && key != last_key + 1) {
+                    printf("%s: Ignore partial record %" PRIu64 " last valid key %" PRIu64 "\n", fname,
+                    key, last_key);
+                    break;
+                }
+                testutil_check(__wt_snprintf(kname, sizeof(kname), KEY_FORMAT, key));
+                cur_coll->set_key(cur_coll, kname);
+                cur_local->set_key(cur_local, kname);
+                cur_oplog->set_key(cur_oplog, kname);
+                cur_shadow->set_key(cur_shadow, kname);
+                /*
+                * The collection table should always only have the data as of the checkpoint. The
+                * shadow table should always have the exact same data (or not) as the collection table,
+                * except for the last key that may be committed after the stable timestamp.
+                */
+                if ((ret = cur_coll->search(cur_coll)) != 0) {
+                    if (ret != WT_NOTFOUND)
+                        testutil_die(ret, "search");
+                    if ((ret = cur_shadow->search(cur_shadow)) == 0)
+                        testutil_die(ret, "shadow search success");
+
+                    /*
+                    * If we don't find a record, the durable timestamp written to our file better be
+                    * larger than the saved one.
+                    */
+                    if (durable_fp != 0 && durable_fp <= stable_val) {
+                        printf("%s: COLLECTION no record with key %" PRIu64
+                            " record durable ts %" PRIu64 " <= stable ts %" PRIu64 "\n",
+                        fname, key, durable_fp, stable_val);
+                        absent_coll++;
+                    }
+                    if (c_rep[i].first_miss == INVALID_KEY)
+                        c_rep[i].first_miss = key;
+                    c_rep[i].absent_key = key;
+                } else if ((ret = cur_shadow->search(cur_shadow)) != 0) {
+                    if (ret != WT_NOTFOUND)
+                        testutil_die(ret, "shadow search");
+                    /*
+                    * We respectively insert the record to the collection table at timestamp t and to
+                    * the shadow table at t + 1. If the checkpoint finishes at timestamp t, the last
+                    * shadow table record will be removed by rollback to stable after restart.
+                    */
+                    if (durable_fp <= stable_val) {
+                        printf("%s: SHADOW no record with key %" PRIu64 "\n", fname, key);
+                        absent_shadow++;
+                    }
+                } else if (c_rep[i].absent_key != INVALID_KEY && c_rep[i].exist_key == INVALID_KEY) {
+                    /*
+                    * If we get here we found a record that exists after absent records, a hole in our
+                    * data.
+                    */
+                    c_rep[i].exist_key = key;
+                    fatal = true;
+                } else if (commit_fp != 0 && commit_fp > stable_val) {
+                    /*
+                    * If we found a record, the commit timestamp written to our file better be no
+                    * larger than the checkpoint one.
+                    */
+                    printf("%s: COLLECTION record with key %" PRIu64 " commit record ts %" PRIu64
+                        " > stable ts %" PRIu64 "\n",
+                    fname, key, commit_fp, stable_val);
+                    fatal = true;
+                } else if ((ret = cur_shadow->search(cur_shadow)) != 0)
+                    /* Collection and shadow both have the data. */
+                    testutil_die(ret, "shadow search failure");
+
+                /* The local table should always have all data. */
+                if ((ret = cur_local->search(cur_local)) != 0) {
+                    if (ret != WT_NOTFOUND)
+                        testutil_die(ret, "search");
+                    printf("%s: LOCAL no record with key %" PRIu64 "\n", fname, key);
+                    absent_local++;
+                    if (l_rep[i].first_miss == INVALID_KEY)
+                        l_rep[i].first_miss = key;
+                    l_rep[i].absent_key = key;
+                } else if (l_rep[i].absent_key != INVALID_KEY && l_rep[i].exist_key == INVALID_KEY) {
+                    /* We should never find an existing key after we have detected one missing. */
+                    l_rep[i].exist_key = key;
+                    fatal = true;
+                }
+                /* The oplog table should always have all data. */
+                if ((ret = cur_oplog->search(cur_oplog)) != 0) {
+                    if (ret != WT_NOTFOUND)
+                        testutil_die(ret, "search");
+                    printf("%s: OPLOG no record with key %" PRIu64 "\n", fname, key);
+                    absent_oplog++;
+                    if (o_rep[i].first_miss == INVALID_KEY)
+                        o_rep[i].first_miss = key;
+                    o_rep[i].absent_key = key;
+                } else if (o_rep[i].absent_key != INVALID_KEY && o_rep[i].exist_key == INVALID_KEY) {
+                    /* We should never find an existing key after we have detected one missing. */
+                    o_rep[i].exist_key = key;
+                    fatal = true;
+                }
+            }
+            c_rep[i].last_key = last_key;
+            l_rep[i].last_key = last_key;
+            o_rep[i].last_key = last_key;
+            testutil_assert_errno(fclose(fp) == 0);
+            print_missing(&c_rep[i], fname, "COLLECTION");
+            print_missing(&l_rep[i], fname, "LOCAL");
+            print_missing(&o_rep[i], fname, "OPLOG");
+        }
+        testutil_check(conn->close(conn, NULL));
+        if (absent_coll) {
+            printf("COLLECTION: %" PRIu64 " record(s) absent from %" PRIu64 "\n", absent_coll, count);
+            fatal = true;
+        }
+        if (absent_shadow) {
+            printf("SHADOW: %" PRIu64 " record(s) absent from %" PRIu64 "\n", absent_shadow, count);
+            fatal = true;
+        }
+        if (absent_local) {
+            printf("LOCAL: %" PRIu64 " record(s) absent from %" PRIu64 "\n", absent_local, count);
+            fatal = true;
+        }
+        if (absent_oplog) {
+            printf("OPLOG: %" PRIu64 " record(s) absent from %" PRIu64 "\n", absent_oplog, count);
+            fatal = true;
+        }
+        testutil_check(pthread_rwlock_destroy(&flush_lock));
+        if (fatal)
+            return (EXIT_FAILURE);
+        printf("%" PRIu64 " records verified\n", count);
+
     }
-    testutil_check(conn->close(conn, NULL));
-    if (absent_coll) {
-        printf("COLLECTION: %" PRIu64 " record(s) absent from %" PRIu64 "\n", absent_coll, count);
-        fatal = true;
-    }
-    if (absent_shadow) {
-        printf("SHADOW: %" PRIu64 " record(s) absent from %" PRIu64 "\n", absent_shadow, count);
-        fatal = true;
-    }
-    if (absent_local) {
-        printf("LOCAL: %" PRIu64 " record(s) absent from %" PRIu64 "\n", absent_local, count);
-        fatal = true;
-    }
-    if (absent_oplog) {
-        printf("OPLOG: %" PRIu64 " record(s) absent from %" PRIu64 "\n", absent_oplog, count);
-        fatal = true;
-    }
-    testutil_check(pthread_rwlock_destroy(&flush_lock));
-    if (fatal)
-        return (EXIT_FAILURE);
-    printf("%" PRIu64 " records verified\n", count);
+
     if (!preserve) {
         testutil_clean_test_artifacts(home);
         /* At this point $PATH is inside `home`, which we intend to delete. cd to the parent dir. */
         if (chdir("../") != 0)
             testutil_die(errno, "root chdir: %s", home);
         testutil_clean_work_dir(home);
+        testutil_cleanup(opts);
     }
-    testutil_cleanup(opts);
+    // testutil_cleanup(opts);
+    printf("Test tiered abort complete!\n");
     return (EXIT_SUCCESS);
 }
