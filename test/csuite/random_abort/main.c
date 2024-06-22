@@ -84,10 +84,10 @@ static WT_LAZY_FS lazyfs;
  */
 #define KEY_FORMAT ("%010" PRIu64)
 
-/*
- * Maximum number of modifications that are allowed to perform cursor modify operation.
- */
-#define MAX_MODIFY_ENTRIES 10
+// /*
+//  * Maximum number of modifications that are allowed to perform cursor modify operation.
+//  */
+// #define MAX_MODIFY_ENTRIES 10
 
 #define MAX_VAL 4096
 /*
@@ -239,15 +239,12 @@ thread_run(void *arg)
     WT_CURSOR *cursor;
     // WT_CURSOR *backup_cursor;
     WT_DECL_RET;
-    WT_ITEM data, newv;
-    WT_MODIFY entries[MAX_MODIFY_ENTRIES];
+    WT_ITEM data;
     WT_RAND_STATE rnd;
     WT_SESSION *session;
     WT_THREAD_DATA *td;
     size_t lsize;
-    size_t maxdiff, new_buf_size;
     uint64_t i, thread_op_id = 0;
-    int nentries;
     char buf[MAX_VAL], new_buf[MAX_VAL];
     char kname[64], lgbuf[8];
     char large[128 * 1024];
@@ -261,7 +258,6 @@ thread_run(void *arg)
     memset(kname, 0, sizeof(kname));
     lsize = sizeof(large);
     memset(large, 0, lsize);
-    nentries = MAX_MODIFY_ENTRIES;
     columnar_table = false;
 
     td = (WT_THREAD_DATA *)arg;
@@ -355,79 +351,79 @@ thread_run(void *arg)
         /*
          * Decide what kind of operation can be performed on the already inserted data.
          */
-        if (i % MAX_NUM_OPS == OP_TYPE_DELETE) {
-            if (columnar_table)
-                cursor->set_key(cursor, i);
-            else
-                cursor->set_key(cursor, kname);
+        // if (i % MAX_NUM_OPS == OP_TYPE_DELETE) {
+        //     if (columnar_table)
+        //         cursor->set_key(cursor, i);
+        //     else
+        //         cursor->set_key(cursor, kname);
 
-            while ((ret = cursor->remove(cursor)) == WT_ROLLBACK);
-            // printf("Thread %u: ret %d \n", td->id, ret);
-            if (ret != 0) {
-                printf("Thread %u: ret %d with key %" PRIu64 "\n", td->id, ret, i);
-            }
-            testutil_assert(ret == 0);
+        //     while ((ret = cursor->remove(cursor)) == WT_ROLLBACK);
+        //     // printf("Thread %u: ret %d \n", td->id, ret);
+        //     if (ret != 0) {
+        //         printf("Thread %u: ret %d with key %" PRIu64 "\n", td->id, ret, i);
+        //     }
+        //     testutil_assert(ret == 0);
 
-            /* Save the key separately for checking later.*/
-            pthread_mutex_lock(&log_mutex);
-            thread_op_id ++;
-            global_op_id++;
-            local_global_op_id = global_op_id;
-            if (fprintf(global_log_file, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", DELETE, %" PRIu64 ", deleted)\n",
-                        local_global_op_id, td->id, thread_op_id, i) < 0)
-                testutil_die(errno, "fprintf");
-            pthread_mutex_unlock(&log_mutex);
+        //     /* Save the key separately for checking later.*/
+        //     pthread_mutex_lock(&log_mutex);
+        //     thread_op_id ++;
+        //     global_op_id++;
+        //     local_global_op_id = global_op_id;
+        //     if (fprintf(global_log_file, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", DELETE, %" PRIu64 ", deleted)\n",
+        //                 local_global_op_id, td->id, thread_op_id, i) < 0)
+        //         testutil_die(errno, "fprintf");
+        //     pthread_mutex_unlock(&log_mutex);
 
-        } else if (i % MAX_NUM_OPS == OP_TYPE_MODIFY) {
-            testutil_snprintf(new_buf, sizeof(new_buf), "modify-%" PRIu64, i);
-            new_buf_size = (data.size < MAX_VAL - 1 ? data.size : MAX_VAL - 1);
+        // } else if (i % MAX_NUM_OPS == OP_TYPE_MODIFY) {
+        //     testutil_snprintf(new_buf, sizeof(new_buf), "modify-%" PRIu64, i);
+        //     new_buf_size = (data.size < MAX_VAL - 1 ? data.size : MAX_VAL - 1);
 
-            newv.data = new_buf;
-            newv.size = new_buf_size;
-            maxdiff = MAX_VAL;
+        //     newv.data = new_buf;
+        //     newv.size = new_buf_size;
+        //     maxdiff = MAX_VAL;
 
-            /*
-             * Make sure the modify operation is carried out in an snapshot isolation level with
-             * explicit transaction.
-             */
-            do {
-                testutil_check(session->begin_transaction(session, NULL));
+        //     /*
+        //      * Make sure the modify operation is carried out in an snapshot isolation level with
+        //      * explicit transaction.
+        //      */
+        //     do {
+        //         testutil_check(session->begin_transaction(session, NULL));
 
-                if (columnar_table)
-                    cursor->set_key(cursor, i);
-                else
-                    cursor->set_key(cursor, kname);
+        //         if (columnar_table)
+        //             cursor->set_key(cursor, i);
+        //         else
+        //             cursor->set_key(cursor, kname);
 
-                ret = wiredtiger_calc_modify(session, &data, &newv, maxdiff, entries, &nentries);
-                if (ret == 0)
-                    ret = cursor->modify(cursor, entries, nentries);
-                else {
-                    /*
-                     * In case if we couldn't able to generate modify vectors, treat this change as
-                     * a normal update operation.
-                     */
-                    cursor->set_value(cursor, &newv);
-                    ret = cursor->update(cursor);
-                }
-                testutil_check(ret == 0 ? session->commit_transaction(session, NULL) :
-                                          session->rollback_transaction(session, NULL));
-            } while (ret == WT_ROLLBACK);
-            testutil_assert(ret == 0);
+        //         ret = wiredtiger_calc_modify(session, &data, &newv, maxdiff, entries, &nentries);
+        //         if (ret == 0)
+        //             ret = cursor->modify(cursor, entries, nentries);
+        //         else {
+        //             /*
+        //              * In case if we couldn't able to generate modify vectors, treat this change as
+        //              * a normal update operation.
+        //              */
+        //             cursor->set_value(cursor, &newv);
+        //             ret = cursor->update(cursor);
+        //         }
+        //         testutil_check(ret == 0 ? session->commit_transaction(session, NULL) :
+        //                                   session->rollback_transaction(session, NULL));
+        //     } while (ret == WT_ROLLBACK);
+        //     testutil_assert(ret == 0);
 
-            /*
-             * Save the key and new value separately for checking later.
-             */
-            pthread_mutex_lock(&log_mutex);
-            thread_op_id ++;
-            global_op_id++;
-            local_global_op_id = global_op_id;
-            if (fprintf(global_log_file, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", MODIFY, %" PRIu64 ", %s)\n",
-                        local_global_op_id, td->id, thread_op_id, i, new_buf) < 0)
-                testutil_die(errno, "fprintf");
-            pthread_mutex_unlock(&log_mutex);
-        } else if (i % MAX_NUM_OPS != OP_TYPE_INSERT)
-            /* Dead code. To catch any op type misses */
-            testutil_die(0, "Unsupported operation type.");
+        //     /*
+        //      * Save the key and new value separately for checking later.
+        //      */
+        //     pthread_mutex_lock(&log_mutex);
+        //     thread_op_id ++;
+        //     global_op_id++;
+        //     local_global_op_id = global_op_id;
+        //     if (fprintf(global_log_file, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", MODIFY, %" PRIu64 ", %s)\n",
+        //                 local_global_op_id, td->id, thread_op_id, i, new_buf) < 0)
+        //         testutil_die(errno, "fprintf");
+        //     pthread_mutex_unlock(&log_mutex);
+        // } else if (i % MAX_NUM_OPS != OP_TYPE_INSERT)
+        //     /* Dead code. To catch any op type misses */
+        //     testutil_die(0, "Unsupported operation type.");
 
         if (i == (td->start + td->num_ops / 2)) {
             pthread_mutex_lock(&backup_mutex);
