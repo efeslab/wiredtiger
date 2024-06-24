@@ -467,8 +467,11 @@ testutil_copy_ext(const char *source, const char *dest, const WT_FILE_COPY_OPTS 
         testutil_assert(!(is_source_dir && dest_exists && !is_dest_dir));
 
         /* If we are copying a directory to another directory that doesn't exist, create it. */
-        if (is_source_dir && !dest_exists)
+        if (is_source_dir && !dest_exists) {
+            printf("Creating directory %s\n", dest);
             testutil_assert_errno(mkdir(dest, source_stat.st_mode) == 0);
+        }
+            
 
         process_directory_tree(path, NULL, 0, true, copy_on_file, copy_on_directory_enter,
           copy_on_directory_leave, &data);

@@ -235,7 +235,7 @@ testutil_copy_data(const char *dir)
     memset(&opts, 0, sizeof(opts));
     opts.preserve = true;
 
-    testutil_snprintf(save_dir, sizeof(save_dir), ".." DIR_DELIM_STR "%s.SAVE", dir);
+    testutil_snprintf(save_dir, sizeof(save_dir), "%s.SAVE", dir);
     testutil_remove(save_dir);
     testutil_copy_ext(".", save_dir, &opts);
 }
