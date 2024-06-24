@@ -53,10 +53,7 @@ static WT_LAZY_FS lazyfs;
 #define MAX_TIME 40
 #define MIN_TIME 10
 
-#define OP_TYPE_DELETE 0
-#define OP_TYPE_INSERT 1
-#define OP_TYPE_MODIFY 2
-#define MAX_NUM_OPS 3
+
 
 // #define DELETE_RECORDS_FILE RECORDS_DIR DIR_DELIM_STR "delete-records-%" PRIu32
 // #define INSERT_RECORDS_FILE RECORDS_DIR DIR_DELIM_STR "insert-records-%" PRIu32
@@ -93,9 +90,9 @@ static WT_LAZY_FS lazyfs;
 /*
  * STR_MAX_VAL is set to MAX_VAL - 1 to account for the extra null character.
  */
-#define STR_MAX_VAL "4095"
+// #define STR_MAX_VAL "4095"
 
-static void handler(int) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
+// static void handler(int) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
 static void usage(void) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
 
 /*
@@ -125,6 +122,9 @@ typedef struct WT_OPS{
 // log file to save logs from different threads
 FILE *global_log_file;
 uint64_t global_op_id = 0;
+char *working_dir;
+char copy_dir[512];
+char home_dir[512];
 
 pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t backup_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -155,7 +155,7 @@ copy_directory(const char *src, const char *dst) {
             FILE *src_file = fopen(src_path, "rb");
             FILE *dst_file = fopen(dst_path, "wb");
 
-            char buffer[4096];
+            char buffer[524288];
             size_t bytes;
 
             while ((bytes = fread(buffer, 1, sizeof(buffer), src_file)) > 0) {
@@ -173,7 +173,7 @@ copy_directory(const char *src, const char *dst) {
 // test_backup(const char* home_dir, const char* copy_dir, WT_SESSION *session) {
 //     WT_CURSOR *backup_cursor;
 //     int ret = 0;
-//     // char* backup_dir = "/home/jiexiao/wiredtiger/build/test/csuite/random_abort/backup";
+//     // char* backup_dir = "/home/yilegu/squint/bug_study/wiredtiger-1-recover-from-backup/wiredtiger/build/test/csuite/random_abort/backup";
 
 //     // // Initialize the WiredTiger database connection
 //     // if ((ret = wiredtiger_open(home_dir, NULL, "create", &conn)) != 0) {
@@ -438,21 +438,50 @@ thread_run(void *arg)
             pthread_mutex_lock(&backup_mutex);
 
             // copy the database
-            copy_directory("/home/jiexiao/squint/alice/alice/example/bug2/workload_dir/WT_HOME", "/home/jiexiao/squint/alice/alice/example/bug2/workload_dir/WT_COPY");
+            snprintf(copy_dir, sizeof(copy_dir), "%s/WT_COPY", working_dir);
+            snprintf(home_dir, sizeof(home_dir), "%s/WT_HOME", working_dir);
 
-            // close the connection 
-            cursor->close(cursor);
-            session->close(session, NULL);
-            td->conn->close(td->conn, NULL);
+        // Open backup cursor
+            testutil_check(session->open_cursor(session, "backup:", NULL, NULL, &cursor));
 
-            // open back up connection
-            testutil_check(wiredtiger_open("/home/jiexiao/squint/alice/alice/example/bug2/workload_dir/WT_COPY", NULL, "create", &td->conn));
+            copy_directory(home_dir, copy_dir);
+
+
+            // Close backup cursor
+            testutil_check(cursor->close(cursor));
+
+            // Close the connection
+            testutil_check(td->conn->close(td->conn, NULL));
+
+            // Reopen the connection from the backup directory
+            testutil_check(wiredtiger_open(copy_dir, NULL, "create", &td->conn));
             testutil_check(td->conn->open_session(td->conn, NULL, NULL, &session));
+
+            // Reopen the cursor
             if (columnar_table)
                 testutil_check(session->open_cursor(session, col_uri, NULL, NULL, &cursor));
             else
                 testutil_check(session->open_cursor(session, uri, NULL, NULL, &cursor));
-            pthread_mutex_unlock(&backup_mutex);
+
+            // // Now you can use the session to interact with the restored database
+            // // ...
+
+            // // Close the connection
+            // testutil_check(conn->close(conn, NULL));
+
+            // // close the connection 
+            // cursor->close(cursor);
+            // session->close(session, NULL);
+            // td->conn->close(td->conn, NULL);
+
+            // // open back up connection
+            // testutil_check(wiredtiger_open(copy_dir, NULL, "create", &td->conn));
+            // testutil_check(td->conn->open_session(td->conn, NULL, NULL, &session));
+            // if (columnar_table)
+            //     testutil_check(session->open_cursor(session, col_uri, NULL, NULL, &cursor));
+            // else
+            //     testutil_check(session->open_cursor(session, uri, NULL, NULL, &cursor));
+            // pthread_mutex_unlock(&backup_mutex);
         }
     }
     
@@ -542,276 +571,21 @@ extern char *__wt_optarg;
  * handler --
  *     TODO: Add a comment describing this function.
  */
-static void
-handler(int sig)
-{
-    pid_t pid;
+// static void
+// handler(int sig)
+// {
+//     pid_t pid;
 
-    WT_UNUSED(sig);
-    pid = wait(NULL);
+//     WT_UNUSED(sig);
+//     pid = wait(NULL);
 
-    /* Clean up LazyFS. */
-    if (use_lazyfs)
-        testutil_lazyfs_cleanup(&lazyfs);
+//     /* Clean up LazyFS. */
+//     if (use_lazyfs)
+//         testutil_lazyfs_cleanup(&lazyfs);
 
-    /* The core file will indicate why the child exited. Choose EINVAL here. */
-    testutil_die(EINVAL, "Child process %" PRIu64 " abnormally exited", (uint64_t)pid);
-}
-
-/*
- * recover_and_verify --
- *     TODO: Add a comment describing this function.
- */
-static int
-recover_and_verify(uint32_t nthreads, char* home_dir)
-{
-    // FILE *fp[MAX_RECORD_FILES];
-    WT_CONNECTION *conn;
-    WT_CURSOR *col_cursor, *cursor, *row_cursor;
-    WT_DECL_RET;
-    WT_ITEM search_value;
-    WT_SESSION *session;
-    uint64_t absent, count, key, last_key, middle;
-    uint32_t i;
-    char file_value[MAX_VAL];
-    // char fname[MAX_RECORD_FILES][64];
-    char kname[64];
-    bool columnar_table, fatal;
-
-    printf("Open database, run recovery and verify content\n");
-    printf("What is WT_HOME? %s\n", home_dir);
-    // testutil_check(wiredtiger_open(WT_HOME_DIR, NULL, TESTUTIL_ENV_CONFIG_REC, &conn));
-    testutil_check(wiredtiger_open(home_dir, NULL, TESTUTIL_ENV_CONFIG_REC, &conn));
-    testutil_check(conn->open_session(conn, NULL, NULL, &session));
-    testutil_check(session->open_cursor(session, col_uri, NULL, NULL, &col_cursor));
-    testutil_check(session->open_cursor(session, uri, NULL, NULL, &row_cursor));
-
-    absent = count = 0;
-    fatal = false;
-    for (i = 0; i < nthreads; ++i) {
-
-        /*
-         * Every alternative thread is operated on column-store table. Make sure that proper cursor
-         * is used for verification of recovered records.
-         */
-        if (i % 2 != 0) {
-            columnar_table = true;
-            cursor = col_cursor;
-        } else {
-            columnar_table = false;
-            cursor = row_cursor;
-        }
-
-        middle = 0;
-        // testutil_snprintf(fname[DELETE_RECORD_FILE_ID], sizeof(fname[DELETE_RECORD_FILE_ID]),
-        //   DELETE_RECORDS_FILE, i);
-        // if ((fp[DELETE_RECORD_FILE_ID] = fopen(fname[DELETE_RECORD_FILE_ID], "r")) == NULL)
-        //     testutil_die(errno, "fopen: %s", fname[DELETE_RECORD_FILE_ID]);
-        // testutil_snprintf(fname[INSERT_RECORD_FILE_ID], sizeof(fname[INSERT_RECORD_FILE_ID]),
-        //   INSERT_RECORDS_FILE, i);
-        // if ((fp[INSERT_RECORD_FILE_ID] = fopen(fname[INSERT_RECORD_FILE_ID], "r")) == NULL)
-        //     testutil_die(errno, "fopen: %s", fname[INSERT_RECORD_FILE_ID]);
-        // testutil_snprintf(fname[MODIFY_RECORD_FILE_ID], sizeof(fname[MODIFY_RECORD_FILE_ID]),
-        //   MODIFY_RECORDS_FILE, i);
-        // if ((fp[MODIFY_RECORD_FILE_ID] = fopen(fname[MODIFY_RECORD_FILE_ID], "r")) == NULL)
-        //     testutil_die(errno, "fopen: %s", fname[MODIFY_RECORD_FILE_ID]);
-
-        if ((global_log_file = fopen("global_log_file.txt", "r")) == NULL) {
-            testutil_die(errno, "fopen: global_log_file.txt");
-        }
-
-        /*
-         * For every key in the saved file, verify that the key exists in the table after recovery.
-         * If we're doing in-memory log buffering we never expect a record missing in the middle,
-         * but records may be missing at the end. If we did write-no-sync, we expect every key to
-         * have been recovered.
-         */
-        for (last_key = UINT64_MAX;; ++count, last_key = key) {
-            ret = fscanf(global_log_file, "%" SCNu64 "\n", &key);
-            /*
-             * Consider anything other than clear success in getting the key to be EOF. We've seen
-             * file system issues where the file ends with zeroes on a 4K boundary and does not
-             * return EOF but a ret of zero.
-             */
-            if (ret != 1)
-                break;
-            /*
-             * If we're unlucky, the last line may be a partially written key at the end that can
-             * result in a false negative error for a missing record. Detect it.
-             */
-            if (last_key != UINT64_MAX && key != last_key + 1) {
-                printf("Global log file: Ignore partial record %" PRIu64 " last valid key %" PRIu64 "\n",
-                  key, last_key);
-                break;
-            }
-
-            if (key % MAX_NUM_OPS == OP_TYPE_DELETE) {
-                /*
-                 * If it is delete operation, make sure the record doesn't exist.
-                 */
-                ret = fscanf(global_log_file, "%" SCNu64 "\n", &key);
-
-                /*
-                 * Consider anything other than clear success in getting the key to be EOF. We've
-                 * seen file system issues where the file ends with zeroes on a 4K boundary and does
-                 * not return EOF but a ret of zero.
-                 */
-                if (ret != 1)
-                    break;
-
-                /*
-                 * If we're unlucky, the last line may be a partially written key at the end that
-                 * can result in a false negative error for a missing record. Detect it.
-                 */
-                if (last_key != UINT64_MAX && key <= last_key) {
-                    printf("Global log file: Ignore partial record %" PRIu64 " last valid key %" PRIu64 "\n",
-                    key, last_key);
-                    break;
-                }
-
-                if (columnar_table)
-                    cursor->set_key(cursor, key);
-                else {
-                    testutil_snprintf(kname, sizeof(kname), KEY_FORMAT, key);
-                    cursor->set_key(cursor, kname);
-                }
-
-                while ((ret = cursor->search(cursor)) == WT_ROLLBACK)
-                    ;
-                if (ret != 0)
-                    testutil_assert(ret == WT_NOTFOUND);
-                else if (middle != 0) {
-                    /*
-                     * We should never find an existing key after we have detected one missing for
-                     * the thread.
-                     */
-                    printf("Global log file: after missing record at %" PRIu64 " key %" PRIu64 " exists\n",
-                        middle, key);
-                    fatal = true;
-                } else {
-                    if (!inmem)
-                        printf("Global log file: deleted record found with key %" PRIu64 "\n",
-                          key);
-                    absent++;
-                    middle = key;
-                }
-            } else if (key % MAX_NUM_OPS == OP_TYPE_INSERT) {
-                /*
-                 * If it is insert only operation, make sure the record exists
-                 */
-                if (columnar_table)
-                    cursor->set_key(cursor, key);
-                else {
-                    testutil_snprintf(kname, sizeof(kname), KEY_FORMAT, key);
-                    cursor->set_key(cursor, kname);
-                }
-
-                while ((ret = cursor->search(cursor)) == WT_ROLLBACK)
-                    ;
-                if (ret != 0) {
-                    testutil_assert(ret == WT_NOTFOUND);
-                    if (!inmem)
-                        printf("Global log file: no insert record with key %" PRIu64 "\n",
-                          key);
-                    absent++;
-                    middle = key;
-                } else if (middle != 0) {
-                    /*
-                     * We should never find an existing key after we have detected one missing for
-                     * the thread.
-                     */
-                    printf("Global log file: after missing record at %" PRIu64 " key %" PRIu64 " exists\n",
-                      middle, key);
-                    fatal = true;
-                }
-            } else if (key % MAX_NUM_OPS == OP_TYPE_MODIFY) {
-                /*
-                 * If it is modify operation, make sure value of the fetched record matches with
-                 * saved.
-                 */
-                ret = fscanf(
-                  global_log_file, "%" STR_MAX_VAL "s %" SCNu64 "\n", file_value, &key);
-
-                /*
-                 * Consider anything other than clear success in getting the key to be EOF. We've
-                 * seen file system issues where the file ends with zeroes on a 4K boundary and does
-                 * not return EOF but a ret of zero.
-                 */
-                if (ret != 2)
-                    break;
-
-                /*
-                 * If we're unlucky, the last line may be a partially written key and value at the
-                 * end that can result in a false negative error for a missing record. Detect the
-                 * key.
-                 */
-                if (last_key != UINT64_MAX && key <= last_key) {
-                    printf("Global log file: Ignore partial record %" PRIu64 " last valid key %" PRIu64 "\n",
-                    key, last_key);
-                    break;
-                }
-
-                if (columnar_table)
-                    cursor->set_key(cursor, key);
-                else {
-                    testutil_snprintf(kname, sizeof(kname), KEY_FORMAT, key);
-                    cursor->set_key(cursor, kname);
-                }
-
-                while ((ret = cursor->search(cursor)) == WT_ROLLBACK)
-                    ;
-                if (ret != 0) {
-                    testutil_assert(ret == WT_NOTFOUND);
-                    if (!inmem)
-                        printf("Global log file: no modified record with key %" PRIu64 "\n",
-                            key);
-                    absent++;
-                    middle = key;
-                } else if (middle != 0) {
-                    /*
-                     * We should never find an existing key after we have detected one missing for
-                     * the thread.
-                     */
-                    printf("Global log file: after missing record at %" PRIu64 " key %" PRIu64 " exists\n",
-                        middle, key);
-                    fatal = true;
-                } else {
-                    testutil_check(cursor->get_value(cursor, &search_value));
-                    if (strncmp(file_value, search_value.data, search_value.size) == 0)
-                        continue;
-
-                    if (!inmem)
-                        /*
-                         * Once the key exist in the database, there is no way that fetched data can
-                         * mismatch with saved.
-                         */
-                        printf("Global log file: modified record with data mismatch key %" PRIu64 "\n",
-                         key);
-
-                    absent++;
-                    middle = key;
-                }
-            } else
-                /* Dead code. To catch any op type misses */
-                testutil_die(0, "Unsupported operation type.");
-        }
-        // for (j = 0; j < MAX_RECORD_FILES; j++) {
-        //     if (fclose(global_log_file) != 0)
-        //         testutil_die(errno, "fclose");
-        // }
-        if (fclose(global_log_file) != 0) {testutil_die(errno, "fclose");}
-                
-    }
-    testutil_check(conn->close(conn, NULL));
-    if (fatal)
-        return (EXIT_FAILURE);
-    if (!inmem && absent) {
-        printf("%" PRIu64 " record(s) are missed from %" PRIu64 "\n", absent, count);
-        return (EXIT_FAILURE);
-    }
-    printf("%" PRIu64 " records verified\n", count);
-    return (EXIT_SUCCESS);
-}
+//     /* The core file will indicate why the child exited. Choose EINVAL here. */
+//     testutil_die(EINVAL, "Child process %" PRIu64 " abnormally exited", (uint64_t)pid);
+// }
 
 // static WT_OPS*
 // read_completed_log(const char* fname) {
@@ -883,7 +657,7 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
 //         testutil_die(errno, "fopen: %s", log_file_path);
 //     }
 
-//     head = read_completed_log("/home/jiexiao/wiredtiger/build/test/csuite/random_abort/ops_completed_log.txt");
+//     head = read_completed_log("/home/yilegu/squint/bug_study/wiredtiger-1-recover-from-backup/wiredtiger/build/test/csuite/random_abort/ops_completed_log.txt");
 //     curr_ops = head;
 
 //     *hashmap = g_hash_table_new(g_direct_hash, g_direct_equal);
@@ -958,7 +732,7 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
 //     int notFound = 0;
 
 //     // Get the hashmap from the global log file
-//     read_global_log("/home/jiexiao/squint/alice/alice/example/bug2/global_log_file.txt", &hashmap);
+//     read_global_log("/home/yilegu/squint/bug_study/wiredtiger-1-recover-from-backup/squint/alice/alice/example/bug2/global_log_file.txt", &hashmap);
 //     num_entries = g_hash_table_size(hashmap);
 //     printf("Number of entries in hashmap: %u\n", num_entries);
     
@@ -1077,7 +851,7 @@ recover_and_verify(uint32_t nthreads, char* home_dir)
 // }
 
 static int 
-checker(const char* home_dir, uint32_t num_ops) {
+checker(const char* home_path, uint32_t num_ops) {
     WT_CONNECTION *conn;
     WT_SESSION *session;
     WT_CURSOR *cursor;
@@ -1087,7 +861,7 @@ checker(const char* home_dir, uint32_t num_ops) {
 
 
     // Initialize the WiredTiger database connection
-    if ((ret = wiredtiger_open(home_dir, NULL, "create", &conn)) != 0) {
+    if ((ret = wiredtiger_open(home_path, NULL, "create", &conn)) != 0) {
         fprintf(stderr, "Error connecting to WiredTiger: %s\n", wiredtiger_strerror(ret));
         return ret;
     }
@@ -1143,21 +917,22 @@ checker(const char* home_dir, uint32_t num_ops) {
 int
 main(int argc, char *argv[])
 {
-    struct sigaction sa;
+    // struct sigaction sa;
     // struct stat sb;
     WT_RAND_STATE rnd;
-    pid_t pid;
+    // pid_t pid;
     uint32_t nth, timeout;
     uint64_t num_ops;
     int ch;
     int ret = 0; 
-    int status;
+    // int status;
     char buf[PATH_MAX];
     // char log_file_path[1024];
     // char fname[MAX_RECORD_FILES][64];
     char cwd_start[PATH_MAX]; /* The working directory when we started */
-    const char *working_dir;
     const char *squint_mode;
+    // const char *global_log_file_path;
+    // const char *backup_path;
     bool preserve, rand_th, rand_time, verify_only, squint;
     char cwd[1024]; // DELETE
 
@@ -1173,7 +948,7 @@ main(int argc, char *argv[])
     squint = false;
     // backup = false;
     num_ops = 0;
-    working_dir = use_lazyfs ? "WT_TEST.random-abort-lazyfs" : "WT_TEST.random-abort";
+    // working_dir = use_lazyfs ? "WT_TEST.random-abort-lazyfs" : "WT_TEST.random-abort";
 
     while ((ch = __wt_getopt(progname, argc, argv, "Cch:lmpT:t:vs:o:")) != EOF)
         switch (ch) {
@@ -1268,7 +1043,8 @@ main(int argc, char *argv[])
     /* Create the database, run the test, and fail. */
     if (!verify_only) {
         /* Create the test's home directory. */
-        global_log_file = fopen("/home/jiexiao/squint/alice/alice/example/bug2/global_log_file.txt", "w");
+        // global_log_file_path = strcat(working_dir, "/global_log_file.txt");
+        global_log_file = fopen("/home/yilegu/squint/bug_study/wiredtiger-1-recover-from-backup/global_log_file.txt", "w");
         if (global_log_file == NULL) {
             testutil_die(errno, "fopen: global_log_file.txt");
         }
@@ -1309,20 +1085,20 @@ main(int argc, char *argv[])
          * Fork a child to insert as many items. We will then randomly kill the child, run recovery
          * and make sure all items we wrote exist after recovery runs.
          */
-        memset(&sa, 0, sizeof(sa));
-        sa.sa_handler = handler;
-        testutil_assert_errno(sigaction(SIGCHLD, &sa, NULL) == 0);
-        testutil_assert_errno((pid = fork()) >= 0);
-        
-        if (pid == 0) { /* child */
-            fill_db(nth, num_ops);
-            kill(getppid(), SIGKILL);
-            /* NOTREACHED */
-            printf("NOT REACHED?\n");
-        } else if (pid > 0 && num_ops != 0) {
-            waitpid(pid, &status, 0);
-            printf("Passed\n");
-        }
+        // memset(&sa, 0, sizeof(sa));
+        // sa.sa_handler = handler;
+        // testutil_assert_errno(sigaction(SIGCHLD, &sa, NULL) == 0);
+        // testutil_assert_errno((pid = fork()) >= 0);
+        fill_db(nth, num_ops);
+        // if (pid == 0) { /* child */
+        //     fill_db(nth, num_ops);
+        //     kill(getppid(), SIGKILL);
+        //     /* NOTREACHED */
+        //     printf("NOT REACHED?\n");
+        // } else if (pid > 0 && num_ops != 0) {
+        //     waitpid(pid, &status, 0);
+        //     printf("Passed\n");
+        // }
         //  else {
         //     /* parent */
         //     /*
@@ -1385,16 +1161,12 @@ main(int argc, char *argv[])
         // testutil_snprintf(buf, sizeof(buf), "%s/%s", home, RECORDS_DIR);
         // wait thread finish
         // testutil_snprintf(buf, sizeof(buf), "%s/%s", home, WT_HOME_DIR);
-        if (checker("/home/jiexiao/squint/alice/alice/example/bug2/workload_dir/WT_HOME", num_ops)!= 0) {
+        snprintf(home_dir, sizeof(home_dir), "%s/WT_HOME", working_dir);
+        if (checker(home_dir, num_ops)!= 0) {
             printf("Mismatch or missing key-value pairs in the database before backup\n");
         } else {
             printf("All key-value pairs are present in the database\n");
         }
-    
-    } else if (verify_only) {
-        // testutil_snprintf(buf, sizeof(buf), "%s/%s", home, RECORDS_DIR);
-        testutil_snprintf(buf, sizeof(buf), "%s/%s", home, WT_HOME_DIR);
-        ret = recover_and_verify(nth, buf);
     } else {
         ret = EXIT_SUCCESS;
     } 
