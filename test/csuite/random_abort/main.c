@@ -129,104 +129,6 @@ char home_dir[512];
 pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t backup_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static void 
-copy_directory(const char *src, const char *dst) {
-    DIR *dir = opendir(src);
-    struct dirent *entry;
-    char src_path[1024];
-    char dst_path[1024];
-    struct stat statbuf;
-
-    mkdir(dst, 0755);
-
-    while ((entry = readdir(dir)) != NULL) {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-            continue;
-        }
-
-        snprintf(src_path, sizeof(src_path), "%s/%s", src, entry->d_name);
-        snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, entry->d_name);
-
-        stat(src_path, &statbuf);
-
-        if (S_ISDIR(statbuf.st_mode)) {
-            copy_directory(src_path, dst_path);
-        } else {
-            FILE *src_file = fopen(src_path, "rb");
-            FILE *dst_file = fopen(dst_path, "wb");
-
-            char buffer[524288];
-            size_t bytes;
-
-            while ((bytes = fread(buffer, 1, sizeof(buffer), src_file)) > 0) {
-                fwrite(buffer, 1, bytes, dst_file);
-            }
-
-            fclose(src_file);
-            fclose(dst_file);
-        }
-    }
-    closedir(dir);
-}
-
-// static int
-// test_backup(const char* home_dir, const char* copy_dir, WT_SESSION *session) {
-//     WT_CURSOR *backup_cursor;
-//     int ret = 0;
-//     // char* backup_dir = "/home/yilegu/squint/bug_study/wiredtiger-1-recover-from-backup/wiredtiger/build/test/csuite/random_abort/backup";
-
-//     // // Initialize the WiredTiger database connection
-//     // if ((ret = wiredtiger_open(home_dir, NULL, "create", &conn)) != 0) {
-//     //     fprintf(stderr, "Error connecting to WiredTiger: %s\n", wiredtiger_strerror(ret));
-//     //     return ret;
-//     // }
-
-//     // // Open a session
-//     // if ((ret = conn->open_session(conn, NULL, NULL, &session)) != 0) {
-//     //     fprintf(stderr, "Error opening session: %s\n", wiredtiger_strerror(ret));
-//     //     return ret;
-//     // }
-
-//     // // Open the table
-//     // // Assume the table is named 'table:mytable'
-//     // if ((ret = session->open_cursor(session, "table:main", NULL, NULL, &cursor)) != 0) {
-//     //     fprintf(stderr, "Error opening cursor: %s\n", wiredtiger_strerror(ret));
-//     //     return ret;
-//     // }
-
-//     // Backup the database
-//     if ((ret = session->open_cursor(session, "backup:", NULL, NULL, &backup_cursor)) != 0) {
-//         fprintf(stderr, "Error backing up database: %s\n", wiredtiger_strerror(ret));
-//         return ret;
-//     }
-
-//     copy_directory(home_dir, copy_dir);
-
-//     // // Close the cursor, session, and connection
-//     // cursor->close(cursor);
-//     // session->close(session, NULL);
-//     // conn->close(conn, NULL);
-
-//     // // Open connection to the copied directory and verify the data
-//     // if ((ret = wiredtiger_open(copy_dir, NULL, "create", &conn)) != 0) {
-//     //     fprintf(stderr, "Error connecting to WiredTiger: %s\n", wiredtiger_strerror(ret));
-//     //     return ret;
-//     // }
-
-//     // // Open a session
-//     // if ((ret = conn->open_session(conn, NULL, NULL, &session)) != 0) {
-//     //     fprintf(stderr, "Error opening session: %s\n", wiredtiger_strerror(ret));
-//     //     return ret;
-//     // }
-
-//     // close the session and connection
-//     // cursor->close(cursor);
-//     backup_cursor->close(backup_cursor);
-//     // session->close(session, NULL);
-//     // conn->close(conn, NULL);
-
-//     return (EXIT_SUCCESS);
-// }
 
 // pthread_mutex_t global_op_mutex = PTHREAD_MUTEX_INITIALIZER;
 /*
@@ -308,19 +210,6 @@ thread_run(void *arg)
             cursor->set_key(cursor, kname);
         }
 
-        
-        
-        /*
-         * Every 30th record write a very large record that exceeds the log buffer size. This forces
-         * us to use the unbuffered path.
-         */
-        // if (i % 30 == 0) {
-        //     data.size = 128 * 1024;
-        //     data.data = large;
-        // } else {
-        //     data.size = __wt_random(&rnd) % MAX_VAL;
-        //     data.data = buf;
-        // }
         data.size = __wt_random(&rnd) % MAX_VAL;
         data.data = buf;
 
@@ -357,132 +246,6 @@ thread_run(void *arg)
             testutil_assert(ret == 0 || ret == EBUSY);
         }
 
-        /*
-         * Decide what kind of operation can be performed on the already inserted data.
-         */
-        // if (i % MAX_NUM_OPS == OP_TYPE_DELETE) {
-        //     if (columnar_table)
-        //         cursor->set_key(cursor, i);
-        //     else
-        //         cursor->set_key(cursor, kname);
-
-        //     while ((ret = cursor->remove(cursor)) == WT_ROLLBACK);
-        //     // printf("Thread %u: ret %d \n", td->id, ret);
-        //     if (ret != 0) {
-        //         printf("Thread %u: ret %d with key %" PRIu64 "\n", td->id, ret, i);
-        //     }
-        //     testutil_assert(ret == 0);
-
-        //     /* Save the key separately for checking later.*/
-        //     pthread_mutex_lock(&log_mutex);
-        //     thread_op_id ++;
-        //     global_op_id++;
-        //     local_global_op_id = global_op_id;
-        //     if (fprintf(global_log_file, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", DELETE, %" PRIu64 ", deleted)\n",
-        //                 local_global_op_id, td->id, thread_op_id, i) < 0)
-        //         testutil_die(errno, "fprintf");
-        //     pthread_mutex_unlock(&log_mutex);
-
-        // } else if (i % MAX_NUM_OPS == OP_TYPE_MODIFY) {
-        //     testutil_snprintf(new_buf, sizeof(new_buf), "modify-%" PRIu64, i);
-        //     new_buf_size = (data.size < MAX_VAL - 1 ? data.size : MAX_VAL - 1);
-
-        //     newv.data = new_buf;
-        //     newv.size = new_buf_size;
-        //     maxdiff = MAX_VAL;
-
-        //     /*
-        //      * Make sure the modify operation is carried out in an snapshot isolation level with
-        //      * explicit transaction.
-        //      */
-        //     do {
-        //         testutil_check(session->begin_transaction(session, NULL));
-
-        //         if (columnar_table)
-        //             cursor->set_key(cursor, i);
-        //         else
-        //             cursor->set_key(cursor, kname);
-
-        //         ret = wiredtiger_calc_modify(session, &data, &newv, maxdiff, entries, &nentries);
-        //         if (ret == 0)
-        //             ret = cursor->modify(cursor, entries, nentries);
-        //         else {
-        //             /*
-        //              * In case if we couldn't able to generate modify vectors, treat this change as
-        //              * a normal update operation.
-        //              */
-        //             cursor->set_value(cursor, &newv);
-        //             ret = cursor->update(cursor);
-        //         }
-        //         testutil_check(ret == 0 ? session->commit_transaction(session, NULL) :
-        //                                   session->rollback_transaction(session, NULL));
-        //     } while (ret == WT_ROLLBACK);
-        //     testutil_assert(ret == 0);
-
-        //     /*
-        //      * Save the key and new value separately for checking later.
-        //      */
-        //     pthread_mutex_lock(&log_mutex);
-        //     thread_op_id ++;
-        //     global_op_id++;
-        //     local_global_op_id = global_op_id;
-        //     if (fprintf(global_log_file, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", MODIFY, %" PRIu64 ", %s)\n",
-        //                 local_global_op_id, td->id, thread_op_id, i, new_buf) < 0)
-        //         testutil_die(errno, "fprintf");
-        //     pthread_mutex_unlock(&log_mutex);
-        // } else if (i % MAX_NUM_OPS != OP_TYPE_INSERT)
-        //     /* Dead code. To catch any op type misses */
-        //     testutil_die(0, "Unsupported operation type.");
-
-        if (i == (td->start + td->num_ops / 2)) {
-            pthread_mutex_lock(&backup_mutex);
-
-            // copy the database
-            snprintf(copy_dir, sizeof(copy_dir), "%s/WT_COPY", working_dir);
-            snprintf(home_dir, sizeof(home_dir), "%s/WT_HOME", working_dir);
-
-        // Open backup cursor
-            testutil_check(session->open_cursor(session, "backup:", NULL, NULL, &cursor));
-
-            copy_directory(home_dir, copy_dir);
-
-
-            // Close backup cursor
-            testutil_check(cursor->close(cursor));
-
-            // Close the connection
-            testutil_check(td->conn->close(td->conn, NULL));
-
-            // Reopen the connection from the backup directory
-            testutil_check(wiredtiger_open(copy_dir, NULL, "create", &td->conn));
-            testutil_check(td->conn->open_session(td->conn, NULL, NULL, &session));
-
-            // Reopen the cursor
-            if (columnar_table)
-                testutil_check(session->open_cursor(session, col_uri, NULL, NULL, &cursor));
-            else
-                testutil_check(session->open_cursor(session, uri, NULL, NULL, &cursor));
-
-            // // Now you can use the session to interact with the restored database
-            // // ...
-
-            // // Close the connection
-            // testutil_check(conn->close(conn, NULL));
-
-            // // close the connection 
-            // cursor->close(cursor);
-            // session->close(session, NULL);
-            // td->conn->close(td->conn, NULL);
-
-            // // open back up connection
-            // testutil_check(wiredtiger_open(copy_dir, NULL, "create", &td->conn));
-            // testutil_check(td->conn->open_session(td->conn, NULL, NULL, &session));
-            // if (columnar_table)
-            //     testutil_check(session->open_cursor(session, col_uri, NULL, NULL, &cursor));
-            // else
-            //     testutil_check(session->open_cursor(session, uri, NULL, NULL, &cursor));
-            // pthread_mutex_unlock(&backup_mutex);
-        }
     }
     
     cursor->close(cursor);
@@ -567,297 +330,12 @@ fill_db(uint32_t nth, uint64_t num_ops)
 extern int __wt_optind;
 extern char *__wt_optarg;
 
-/*
- * handler --
- *     TODO: Add a comment describing this function.
- */
-// static void
-// handler(int sig)
-// {
-//     pid_t pid;
-
-//     WT_UNUSED(sig);
-//     pid = wait(NULL);
-
-//     /* Clean up LazyFS. */
-//     if (use_lazyfs)
-//         testutil_lazyfs_cleanup(&lazyfs);
-
-//     /* The core file will indicate why the child exited. Choose EINVAL here. */
-//     testutil_die(EINVAL, "Child process %" PRIu64 " abnormally exited", (uint64_t)pid);
-// }
-
-// static WT_OPS*
-// read_completed_log(const char* fname) {
-//     FILE *fp;
-//     uint64_t thread_id, done;
-//     uint32_t thread_op_id;
-//     char *line = NULL;
-//     size_t len = 0;
-//     ssize_t read;
-//     WT_OPS * ops_head, *curr_ops;
-
-//     fp = fopen(fname, "r");
-//     if (fp == NULL) {
-//         testutil_die(errno, "fopen: %s", fname);
-//     }
-
-//     ops_head = (WT_OPS *)malloc(sizeof(WT_OPS));
-//     curr_ops = ops_head;
-//     ops_head->ops = NULL;
-
-//     // Read the file line by line in format (thread_id, thread_op_id, done)
-//     while ((read = getline(&line, &len, fp)) != -1) {
-//         sscanf(line, "%" SCNu64 ", %" SCNu32 ", %" SCNu64 "\n",
-//             &thread_id, &thread_op_id, &done);
-//         if (done) {
-//             // construct WT_OPS struct
-//             curr_ops->th_id = thread_id;
-//             curr_ops->th_op_id = thread_op_id;
-//             curr_ops->ops = (WT_OPS *)malloc(sizeof(WT_OPS));
-//             curr_ops = curr_ops->ops;
-//             curr_ops->ops = NULL;
-//         }
-//     }
-
-//     fclose(fp);
-//     if (line) {
-//         free(line);
-//     }
-
-//     // Ensure the last node's ops is NULL
-//     if (curr_ops != ops_head) {
-//         free(curr_ops);
-//         curr_ops = NULL;
-//     }
-
-//     return ops_head;
-// }
-
-// // Read the global log file and update the hashmap
-// // Input: log_file_path - path to the global log file
-// // Output: hashmap_out - hashmap to be updated
-// static void
-// read_global_log(const char* log_file_path, GHashTable **hashmap) { 
-//     FILE *fp;
-//     char *buf = (char *)malloc(64 * sizeof(char));
-//     char *op = (char *)malloc(64 * sizeof(char));
-//     uint64_t global_id, thread_op_id;
-//     uint32_t thread_id;
-//     uint32_t key;
-//     char *line = NULL;
-//     size_t len = 0;
-//     ssize_t read;
-//     WT_OPS *head, *curr_ops, *temp;
-//     // char* element;
-
-
-//     fp = fopen(log_file_path, "r");
-//     if (fp == NULL) {
-//         testutil_die(errno, "fopen: %s", log_file_path);
-//     }
-
-//     head = read_completed_log("/home/yilegu/squint/bug_study/wiredtiger-1-recover-from-backup/wiredtiger/build/test/csuite/random_abort/ops_completed_log.txt");
-//     curr_ops = head;
-
-//     *hashmap = g_hash_table_new(g_direct_hash, g_direct_equal);
-
-//     // Iterate the completed operations and update the hashmap    
-//     while (curr_ops->ops != NULL) {
-//         // Get line until the thread_id and thread_op_id match
-//         while ((read = getline(&line, &len, fp)) != -1) {
-//             // Read the file line by line in format (global_id, thread_id, thread_op_id, op, key, buf)
-//             sscanf(line, "(%" PRIu64 ", %" PRIu32 ", %" PRIu64 ", %63[^,], %u, %63[^)\n])\n",
-//                 &global_id, &thread_id, &thread_op_id, op, &key, buf);
-
-//             // let key and buf null terminated
-//             buf[strlen(buf)] = '\0';
-
-//             if (curr_ops->th_id == thread_id && curr_ops->th_op_id == thread_op_id) {
-//                 printf("Thread %u, op %lu: %s %u %s\n", thread_id, thread_op_id, op, key, buf);
-//                 if (strcmp(op, "BACKUP") != 0) {
-//                     if (strcmp(op, "INSERT") == 0) {
-//                         // insert the key_val pair into the hashmap
-//                         g_hash_table_insert(*hashmap, GINT_TO_POINTER(key), strdup(buf));
-//                     } else if (strcmp(op, "DELETE") == 0) {
-//                         // delete the key_val pair from the hashmap
-//                         g_hash_table_remove(*hashmap, GINT_TO_POINTER(key));
-//                     } else if (strcmp(op, "MODIFY") == 0) {
-//                         // modify the key_val pair in the hashmap
-//                         g_hash_table_insert(*hashmap, GINT_TO_POINTER(key), strdup(buf));
-//                     }    
-//                 }
-//                 break;
-//             }
-//         }
-//         curr_ops = curr_ops->ops;
-//     }
-
-//     fclose(fp);
-//     if (line) {
-//         free(line);
-//     }
-
-//     free(buf);
-//     free(op);
-//     // free(key);
-
-//     // Free the WT_OPS list
-//     while (head->ops != NULL) {
-//         temp = head;
-//         head = head->ops;
-//         free(temp);
-//     }
-// }
-
-// // Check the database for the key_val pairs present in the hashmap
-// // return 0 if the key_val pairs are present in the database
-// // return 1 if the key_val pairs are not present in the database
-// static int
-// check_db(const char* home_dir) {
-//     WT_CONNECTION *conn;
-//     WT_SESSION *session;
-//     WT_CURSOR *cursor;
-//     uint32_t key_val;
-//     char *key;  
-//     WT_ITEM data;
-//     char* hashmap_value;
-//     int ret;
-//     GHashTable* hashmap = NULL;
-
-//     unsigned num_entries;
-//     // GHashTableIter iter;
-//     // gpointer key_ptr, value_ptr;
-
-//     int notFound = 0;
-
-//     // Get the hashmap from the global log file
-//     read_global_log("/home/yilegu/squint/bug_study/wiredtiger-1-recover-from-backup/squint/alice/alice/example/bug2/global_log_file.txt", &hashmap);
-//     num_entries = g_hash_table_size(hashmap);
-//     printf("Number of entries in hashmap: %u\n", num_entries);
-    
-    
-//     // // print all key value pairs in hashmap
-//     /////////////////////////////////////////////////////////////////////////////////////
-//     // g_hash_table_iter_init(&iter, hashmap);
-//     // while (g_hash_table_iter_next(&iter, &key_ptr, &value_ptr)) {
-//     //     printf("Key: %d, Value: %s\n", GPOINTER_TO_INT(key_ptr), (char*)value_ptr);
-//     // }
-//     // if (!g_hash_table_contains(hashmap, key_ptr)) {
-//     //     // Key not found in hashmap, print the key-value pair
-//     //     fprintf(stderr, "Key not found in hashmap: Key: %d, Value: %s\n", GPOINTER_TO_INT(key_ptr), value);
-//     // }
-//     // hashmap_value = (char *)g_hash_table_lookup(hashmap, key_ptr);
-//     // // print hashmap_value
-//     // printf("Hashmap value: %s\n", hashmap_value);
-
-
-//     // if (!g_hash_table_contains(hashmap, GINT_TO_POINTER(1))) {
-//     //     // Key not found in hashmap, print the key-value pair
-//     //     fprintf(stderr, "Key not found in hashmap: Key: %d, Value: %s\n", 1, value);
-//     // }
-//     // hashmap_value = (char *)g_hash_table_lookup(hashmap, GINT_TO_POINTER(1));
-//     // // print hashmap_value
-//     // printf("Hashmap value: %s\n", hashmap_value);
-//     /////////////////////////////////////////////////////////////////////////////
-
-
-//     // Initialize the WiredTiger database connection
-//     if ((ret = wiredtiger_open(home_dir, NULL, "create", &conn)) != 0) {
-//         fprintf(stderr, "Error connecting to WiredTiger: %s\n", wiredtiger_strerror(ret));
-//         return ret;
-//     }
-
-//     // Open a session
-//     if ((ret = conn->open_session(conn, NULL, NULL, &session)) != 0) {
-//         fprintf(stderr, "Error opening session: %s\n", wiredtiger_strerror(ret));
-//         return ret;
-//     }
-
-//     // Open the table
-//     // Assume the table is named 'table:mytable'
-//     if ((ret = session->open_cursor(session, "table:main", NULL, NULL, &cursor)) != 0) {
-//         fprintf(stderr, "Error opening cursor: %s\n", wiredtiger_strerror(ret));
-//         return ret;
-//     }
-
-//     // Iterate through the table and print the key-value pairs
-//     while ((ret = cursor->next(cursor)) == 0) {
-//         if ((ret = cursor->get_key(cursor, &key)) != 0) {
-//             fprintf(stderr, "Error getting key: %s\n", wiredtiger_strerror(ret));
-//             cursor->close(cursor);
-//             session->close(session, NULL);
-//             conn->close(conn, NULL);
-//             g_hash_table_destroy(hashmap);
-//             return ret;
-//         }
-
-//         key_val = (uint32_t)atoi(key);
-
-//         // Check if the key is present in the hashmap
-//         hashmap_value = (char *)g_hash_table_lookup(hashmap, GINT_TO_POINTER(key_val));
-        
-//         // print hashmap_value
-//         // printf("Key: %u\n", key_val);
-//         // printf("Hashmap value: %s\n", hashmap_value);
-
-//         if ((ret = cursor->get_value(cursor, &data)) != 0) {
-//             fprintf(stderr, "Error getting value: %s\n", wiredtiger_strerror(ret));
-//             cursor->close(cursor);
-//             session->close(session, NULL);
-//             conn->close(conn, NULL);
-//             g_hash_table_destroy(hashmap);
-//             return ret;
-//         }
-
-//          if (hashmap_value == NULL || strcmp(hashmap_value, (char *)data.data) != 0) {
-//             // Key not found or value mismatch, print the key-value pair
-//             fprintf(stderr, "Mismatch or missing key: Key: %u, actual value: %s, expected value: %s\n", key_val, hashmap_value, (char *)data.data);
-//             notFound = 1;
-//         } else {
-//             // Remove the key from the hashmap
-//             g_hash_table_remove(hashmap, GINT_TO_POINTER(key_val));
-//         }
-//     }
-
-//     if (ret != WT_NOTFOUND) {
-//         fprintf(stderr, "Error iterating cursor: %s\n", wiredtiger_strerror(ret));
-//         cursor->close(cursor);
-//         session->close(session, NULL);
-//         conn->close(conn, NULL);
-//         g_hash_table_destroy(hashmap);
-//         return EXIT_FAILURE;
-//     }
-
-//     // check the size of hashmap
-//     num_entries = g_hash_table_size(hashmap);
-//     if (num_entries != 0) {
-//         fprintf(stderr, "Error: Hashmap not empty. Number of entries: %u\n", num_entries);
-//         cursor->close(cursor);
-//         session->close(session, NULL);
-//         conn->close(conn, NULL);
-//         g_hash_table_destroy(hashmap);
-//         return EXIT_FAILURE;
-//     }
-
-
-//     // Close the cursor, session, and connection
-//     cursor->close(cursor);
-//     session->close(session, NULL);
-//     conn->close(conn, NULL);
-//     g_hash_table_destroy(hashmap);
-
-//     return notFound;
-// }
-
 static int 
-checker(const char* home_path, uint32_t num_ops) {
+checker(const char* home_path) {
     WT_CONNECTION *conn;
     WT_SESSION *session;
     WT_CURSOR *cursor;
-    WT_ITEM data; 
     int ret;
-    uint32_t num_entries = 0;
 
 
     // Initialize the WiredTiger database connection
@@ -877,29 +355,6 @@ checker(const char* home_path, uint32_t num_ops) {
     if ((ret = session->open_cursor(session, "table:main", NULL, NULL, &cursor)) != 0) {
         fprintf(stderr, "Error opening cursor: %s\n", wiredtiger_strerror(ret));
         return ret;
-    }
-
-    // Iterate through the table and print the key-value pairs
-    while ((ret = cursor->next(cursor)) == 0) {
-        if ((ret = cursor->get_value(cursor, &data)) != 0) {
-            fprintf(stderr, "Error getting value: %s\n", wiredtiger_strerror(ret));
-            cursor->close(cursor);
-            session->close(session, NULL);
-            conn->close(conn, NULL);
-            return ret;
-        }
-
-        num_entries++;
-        printf("Value: %s\n", (char *)data.data);
-        if (strcmp("backup", (char *)data.data) == 0) {
-            if (num_entries != num_ops / 2) {
-                fprintf(stderr, "Error: Number of entries in the database is not equal to the number of operations\n");
-                cursor->close(cursor);
-                session->close(session, NULL);
-                conn->close(conn, NULL);
-                return EXIT_FAILURE;
-            }
-        }
     }
 
     // Close the cursor, session, and connection
@@ -1044,7 +499,7 @@ main(int argc, char *argv[])
     if (!verify_only) {
         /* Create the test's home directory. */
         // global_log_file_path = strcat(working_dir, "/global_log_file.txt");
-        global_log_file = fopen("/home/yilegu/squint/bug_study/wiredtiger-1-recover-from-backup/global_log_file.txt", "w");
+        global_log_file = fopen("/home/jiexiao/squint/alice/alice/example/bug2/workload_dir/global_log_file.txt", "w");
         if (global_log_file == NULL) {
             testutil_die(errno, "fopen: global_log_file.txt");
         }
@@ -1090,47 +545,8 @@ main(int argc, char *argv[])
         // testutil_assert_errno(sigaction(SIGCHLD, &sa, NULL) == 0);
         // testutil_assert_errno((pid = fork()) >= 0);
         fill_db(nth, num_ops);
-        // if (pid == 0) { /* child */
-        //     fill_db(nth, num_ops);
-        //     kill(getppid(), SIGKILL);
-        //     /* NOTREACHED */
-        //     printf("NOT REACHED?\n");
-        // } else if (pid > 0 && num_ops != 0) {
-        //     waitpid(pid, &status, 0);
-        //     printf("Passed\n");
-        // }
-        //  else {
-        //     /* parent */
-        //     /*
-        //     * Sleep for the configured amount of time before killing the child. Start the timeout from
-        //     * the time we notice that the child workers have created their record files. That allows
-        //     * the test to run correctly on really slow machines.
-        //     */
-        //     // while (i < nth) {
-        //     //     for (j = 0; j < MAX_RECORD_FILES; j++) {
-        //     //         /*
-        //     //         * Wait for each record file to exist.
-        //     //         */
-        //     //         if (j == DELETE_RECORD_FILE_ID)
-        //     //             testutil_snprintf(fname[j], sizeof(fname[j]), DELETE_RECORDS_FILE, i);
-        //     //         else if (j == INSERT_RECORD_FILE_ID)
-        //     //             testutil_snprintf(fname[j], sizeof(fname[j]), INSERT_RECORDS_FILE, i);
-        //     //         else
-        //     //             testutil_snprintf(fname[j], sizeof(fname[j]), MODIFY_RECORDS_FILE, i);
-        //     //         testutil_snprintf(buf, sizeof(buf), "%s/%s", home, fname[j]);
-        //     //         while (stat(buf, &sb) != 0)
-        //     //             testutil_sleep_wait(1, pid);
-        //     //     }
-        //     //     ++i;
-        //     // }
 
-        //     sleep(timeout);
-        //     sa.sa_handler = SIG_DFL;
-        //     testutil_assert_errno(sigaction(SIGCHLD, &sa, NULL) == 0);
-        //     testutil_assert_errno(kill(pid, SIGKILL) == 0);
-        //     testutil_assert_errno(waitpid(pid, &status, 0) != -1);
-        // }
-       fclose(global_log_file);
+        fclose(global_log_file);
     }
     printf("Filled database!\n");
 
@@ -1162,7 +578,7 @@ main(int argc, char *argv[])
         // wait thread finish
         // testutil_snprintf(buf, sizeof(buf), "%s/%s", home, WT_HOME_DIR);
         snprintf(home_dir, sizeof(home_dir), "%s/WT_HOME", working_dir);
-        if (checker(home_dir, num_ops)!= 0) {
+        if (checker(home_dir)!= 0) {
             printf("Mismatch or missing key-value pairs in the database before backup\n");
         } else {
             printf("All key-value pairs are present in the database\n");
