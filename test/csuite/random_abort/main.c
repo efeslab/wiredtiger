@@ -122,7 +122,7 @@ typedef struct WT_OPS{
 // log file to save logs from different threads
 FILE *global_log_file;
 uint64_t global_op_id = 0;
-char *working_dir;
+const char *working_dir;
 char copy_dir[512];
 char home_dir[512];
 
@@ -248,9 +248,12 @@ thread_run(void *arg)
 
     }
     
-    cursor->close(cursor);
-    session->close(session, NULL);
-    td->conn->close(td->conn, NULL);
+    if (cursor != NULL) {
+        ret = cursor->close(cursor);
+        testutil_assert(ret == 0);
+    }
+    ret = session->close(session, NULL);
+    testutil_assert(ret == 0);
 
     // KILL IF USING NUM_OPS
     if (td->num_ops != 0) {
@@ -302,7 +305,8 @@ fill_db(uint32_t nth, uint64_t num_ops)
     printf("Create %" PRIu32 " writer threads\n", nth);
     for (i = 0; i < nth; ++i) {
         td[i].conn = conn;
-        num_ops != 0 ? td[i].start = num_ops * (uint64_t)i : WT_BILLION * (uint64_t)i;
+        // num_ops != 0 ? td[i].start = num_ops * (uint64_t)i : WT_BILLION * (uint64_t)i;
+        td[i].start = num_ops != 0 ? num_ops * (uint64_t)i : WT_BILLION * (uint64_t)i;
         // td[i].start = WT_BILLION * (uint64_t)i; // change to num_ops
         td[i].id = i;
         td[i].num_ops = num_ops;
@@ -320,6 +324,7 @@ fill_db(uint32_t nth, uint64_t num_ops)
         printf("Joined thread %u\n", i);
     }
     printf("Ops: All threads complete!");
+    testutil_check(conn->close(conn, NULL));
     free(thr);
     free(td);
     if (num_ops == 0) {
@@ -330,39 +335,82 @@ fill_db(uint32_t nth, uint64_t num_ops)
 extern int __wt_optind;
 extern char *__wt_optarg;
 
-static int 
-checker(const char* home_path) {
-    WT_CONNECTION *conn;
-    WT_SESSION *session;
-    WT_CURSOR *cursor;
+static int checker(const char* home_path) {
+    WT_CONNECTION *conn = NULL;
+    WT_SESSION *session = NULL;
+    WT_CURSOR *cursor = NULL;
     int ret;
-
 
     // Initialize the WiredTiger database connection
     if ((ret = wiredtiger_open(home_path, NULL, "create", &conn)) != 0) {
         fprintf(stderr, "Error connecting to WiredTiger: %s\n", wiredtiger_strerror(ret));
-        return ret;
+        return EXIT_FAILURE;
     }
 
     // Open a session
     if ((ret = conn->open_session(conn, NULL, NULL, &session)) != 0) {
         fprintf(stderr, "Error opening session: %s\n", wiredtiger_strerror(ret));
-        return ret;
+        goto cleanup_connection;
     }
 
-    // Open the table
-    // Assume the table is named 'table:mytable'
+    // Open the cursor for the table 'table:main'
     if ((ret = session->open_cursor(session, "table:main", NULL, NULL, &cursor)) != 0) {
         fprintf(stderr, "Error opening cursor: %s\n", wiredtiger_strerror(ret));
-        return ret;
+        goto cleanup_session;
     }
 
-    // Close the cursor, session, and connection
-    cursor->close(cursor);
-    session->close(session, NULL);
-    conn->close(conn, NULL);
+    // Iterate over the table
+    while ((ret = cursor->next(cursor)) == 0) {
+        WT_ITEM key_item, value_item;
 
-    return EXIT_SUCCESS;
+        // Get the key
+        if ((ret = cursor->get_key(cursor, &key_item)) != 0) {
+            fprintf(stderr, "Error getting key: %s\n", wiredtiger_strerror(ret));
+            goto cleanup_cursor;
+        }
+
+        // Get the value
+        if ((ret = cursor->get_value(cursor, &value_item)) != 0) {
+            fprintf(stderr, "Error getting value: %s\n", wiredtiger_strerror(ret));
+            goto cleanup_cursor;
+        }
+
+        // Print the key and value
+        printf("key: %s, value: %s\n",
+       (const char *)key_item.data,
+       (const char *)value_item.data);
+    }
+
+    if (ret != WT_NOTFOUND) {
+        fprintf(stderr, "Error iterating over cursor: %s\n", wiredtiger_strerror(ret));
+        goto cleanup_cursor;
+    }
+
+    // Successfully iterated over the table
+    ret = EXIT_SUCCESS;
+
+cleanup_cursor:
+    if (cursor) {
+        if ((ret = cursor->close(cursor)) != 0) {
+            fprintf(stderr, "Error closing cursor: %s\n", wiredtiger_strerror(ret));
+        }
+    }
+
+cleanup_session:
+    if (session) {
+        if ((ret = session->close(session, NULL)) != 0) {
+            fprintf(stderr, "Error closing session: %s\n", wiredtiger_strerror(ret));
+        }
+    }
+
+cleanup_connection:
+    if (conn) {
+        if ((ret = conn->close(conn, NULL)) != 0) {
+            fprintf(stderr, "Error closing connection: %s\n", wiredtiger_strerror(ret));
+        }
+    }
+
+    return ret == EXIT_SUCCESS ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 /*
@@ -404,81 +452,93 @@ main(int argc, char *argv[])
     // backup = false;
     num_ops = 0;
     // working_dir = use_lazyfs ? "WT_TEST.random-abort-lazyfs" : "WT_TEST.random-abort";
+    if (argc == 2) {
+        rand_th = false;
+        nth = 1;
 
-    while ((ch = __wt_getopt(progname, argc, argv, "Cch:lmpT:t:vs:o:")) != EOF)
-        switch (ch) {
-        case 'C':
-            compat = true;
-            break;
-        case 'c':
-            compaction = true;
-            break;
-        case 'h':
-            working_dir = __wt_optarg;
-            while (isspace(*working_dir)) working_dir++;
-            break;
-        case 'l':
-            use_lazyfs = true;
-            break;
-        case 'm':
-            inmem = true;
-            break;
-        case 'p':
-            preserve = true;
-            break;
-        case 'T':
-            rand_th = false;
-            nth = (uint32_t)atoi(__wt_optarg);
-            break;
-        case 't':
-            rand_time = false;
-            timeout = (uint32_t)atoi(__wt_optarg);
-            break;
-        case 'v':
-            verify_only = true;
-            break;
-        case 's':
-            squint_mode = __wt_optarg;
-            // remove any numbers of trailing space in the beginning
-            while (isspace(*squint_mode)) squint_mode++;
-            printf("Squint Mode: %s\n", squint_mode);
-            if (strcmp(squint_mode, "workload") == 0) {
-                squint = true;
+        working_dir = argv[1];
+        while (isspace(*working_dir)) working_dir++;
+
+        squint = true;
+        preserve = true;
+        verify_only = true;
+    } else {
+        while ((ch = __wt_getopt(progname, argc, argv, "Cch:lmpT:t:vs:o:")) != EOF)
+            switch (ch) {
+            case 'C':
+                compat = true;
+                break;
+            case 'c':
+                compaction = true;
+                break;
+            case 'h':
+                working_dir = __wt_optarg;
+                while (isspace(*working_dir)) working_dir++;
+                break;
+            case 'l':
+                use_lazyfs = true;
+                break;
+            case 'm':
+                inmem = true;
+                break;
+            case 'p':
                 preserve = true;
-            }
-            if (strcmp(squint_mode, "checker") == 0) {
-                squint = true;
-                preserve = true;
-                verify_only = true;
-            }
-            // if (strcmp(squint_mode, "backup-workload") == 0) {
-            //     squint = true;
-            //     preserve = true;
-            //     backup = true;
-            // }
-            // if (strcmp(squint_mode, "backup-checker") == 0) {
-            //     squint = true;
-            //     preserve = true;
-            //     verify_only = true;
-            //     backup = true;
-            // }
-            break;
-        case 'o':
-            /* The number of operations per thread. Takes precedence over -t. */
-            if (__wt_optarg != 0) {
+                break;
+            case 'T':
+                rand_th = false;
+                nth = (uint32_t)atoi(__wt_optarg);
+                break;
+            case 't':
                 rand_time = false;
-                num_ops = (uint64_t)atoi(__wt_optarg);
-                printf("Timeout disabled, executing a finite number of operations.\n");
+                timeout = (uint32_t)atoi(__wt_optarg);
+                break;
+            case 'v':
+                verify_only = true;
+                break;
+            case 's':
+                squint_mode = __wt_optarg;
+                // remove any numbers of trailing space in the beginning
+                while (isspace(*squint_mode)) squint_mode++;
+                printf("Squint Mode: %s\n", squint_mode);
+                if (strcmp(squint_mode, "workload") == 0) {
+                    squint = true;
+                    preserve = true;
+                }
+                if (strcmp(squint_mode, "checker") == 0) {
+                    squint = true;
+                    preserve = true;
+                    verify_only = true;
+                }
+                // if (strcmp(squint_mode, "backup-workload") == 0) {
+                //     squint = true;
+                //     preserve = true;
+                //     backup = true;
+                // }
+                // if (strcmp(squint_mode, "backup-checker") == 0) {
+                //     squint = true;
+                //     preserve = true;
+                //     verify_only = true;
+                //     backup = true;
+                // }
+                break;
+            case 'o':
+                /* The number of operations per thread. Takes precedence over -t. */
+                if (__wt_optarg != 0) {
+                    rand_time = false;
+                    num_ops = (uint64_t)atoi(__wt_optarg);
+                    printf("Timeout disabled, executing a finite number of operations.\n");
+                }
+                break;
+            default:
+                usage();
             }
-            break;
-        default:
-            usage();
-        }
-    argc -= __wt_optind;
-    if (argc != 0)
-        usage();
-    
-    
+    }
+
+    // argc -= __wt_optind;
+    // if (argc != 0)
+    //     usage();
+
+
     // snprintf(log_file_path, sizeof(log_file_path), "%s/global_log_file.txt", working_dir);
     // printf("Log file path: %s\n", log_file_path);
     testutil_work_dir_from_path(home, sizeof(home), working_dir);
@@ -499,7 +559,7 @@ main(int argc, char *argv[])
     if (!verify_only) {
         /* Create the test's home directory. */
         // global_log_file_path = strcat(working_dir, "/global_log_file.txt");
-        global_log_file = fopen("/home/jiexiao/squint/alice/alice/example/bug2/workload_dir/global_log_file.txt", "w");
+        global_log_file = fopen("/home/jiexiao/squint/alice/alice/bugs/bug4/global_log_file.txt", "w");
         if (global_log_file == NULL) {
             testutil_die(errno, "fopen: global_log_file.txt");
         }
@@ -547,8 +607,9 @@ main(int argc, char *argv[])
         fill_db(nth, num_ops);
 
         fclose(global_log_file);
+        printf("Filled database!\n");
     }
-    printf("Filled database!\n");
+   
 
     /*
      * !!! If we wanted to take a copy of the directory before recovery,
